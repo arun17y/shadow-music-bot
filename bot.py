@@ -1162,6 +1162,16 @@ class YTSource(discord.PCMVolumeTransformer):
             try:
                 search_term = track_title
                 if not search_term:
+                    try:
+                        import urllib.request, json
+                        oembed_url = f"https://www.youtube.com/oembed?url={url}&format=json"
+                        o_req = urllib.request.Request(oembed_url, headers={"User-Agent": "Mozilla/5.0"})
+                        with urllib.request.urlopen(o_req, timeout=3) as o_resp:
+                            o_data = json.loads(o_resp.read().decode())
+                            search_term = o_data.get("title")
+                    except Exception:
+                        pass
+                if not search_term:
                     vid_match = re.search(r'(?:v=|\/|youtu\.be\/)([0-9A-Za-z_-]{11})', url)
                     q = f"ytsearch1:{vid_match.group(1)}" if vid_match else url
                     flat_ytdl = yt_dlp.YoutubeDL({"extract_flat": True, "quiet": True, "cookiefile": COOKIE_ARG})
@@ -1172,6 +1182,9 @@ class YTSource(discord.PCMVolumeTransformer):
 
                 if search_term:
                     clean_term = re.sub(r'\(.*?\)|\[.*?\]', '', search_term).strip()
+                    clean_term = re.sub(r'(?i)\b(official\s*(video|audio|music\s*video|lyric\s*video)?|full\s*video|4k|hd|remastered|lyrics?)\b', '', clean_term).strip()
+                    if "|" in clean_term:
+                        clean_term = clean_term.split("|")[0].strip()
                     print(f"🔄 Resolving audio via SoundCloud CDN for: {clean_term}")
                     sc_opts = {
                         "format": "bestaudio/best",
@@ -1183,7 +1196,13 @@ class YTSource(discord.PCMVolumeTransformer):
                     sc_ytdl = yt_dlp.YoutubeDL(sc_opts)
                     sc_data = sc_ytdl.extract_info(f"scsearch5:{clean_term}", download=False)
                     sc_entries = sc_data.get("entries", []) if sc_data else []
-                    valid_sc = [e for e in sc_entries if e and (e.get("duration") or 0) >= 60 and e.get("url")]
+                    valid_sc = [
+                        e for e in sc_entries 
+                        if e and (e.get("duration") or 0) >= 60 and e.get("url")
+                        and "slowed" not in (e.get("title") or "").lower()
+                        and "reverb" not in (e.get("title") or "").lower()
+                        and "mashup" not in (e.get("title") or "").lower()
+                    ]
                     if valid_sc:
                         print(f"✅ Fallback to SoundCloud audio stream succeeded: {valid_sc[0].get('title')}")
                         return valid_sc[0]
@@ -1726,16 +1745,14 @@ class MusicBot(commands.Bot):
             try:
                 self.bgutil_proc = subprocess.Popen(
                     cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
                 )
                 print(f"🚀 Started bgutil-pot PO Token server daemon (PID {self.bgutil_proc.pid}) on port 4416")
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(1.0)
                 poll = self.bgutil_proc.poll()
                 if poll is not None:
-                    out = self.bgutil_proc.stdout.read() if self.bgutil_proc.stdout else ""
-                    print(f"⚠️ bgutil-pot server exited with code {poll}: {out.strip()[:300]}")
+                    print(f"⚠️ bgutil-pot server exited with code {poll}")
                 else:
                     print("✅ bgutil-pot daemon is actively running and listening on port 4416.")
             except Exception as e:
