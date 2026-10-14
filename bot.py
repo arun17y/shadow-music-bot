@@ -5369,10 +5369,6 @@ if __name__ == "__main__":
             print("═"*60 + "\n")
             sys.exit(1)
         except Exception as e:
-            try:
-                bot.clear()
-            except Exception:
-                pass
             err_str = str(e)
             if "429" in err_str or "1015" in err_str or "rate limit" in err_str.lower():
                 print(f"⚠️ Discord Cloudflare Gateway Rate Limit encountered. Backing off for 45 seconds before reconnecting...")
@@ -5380,3 +5376,9 @@ if __name__ == "__main__":
             else:
                 print(f"⚠️ Gateway connection error: {e}. Retrying connection in 10 seconds...")
                 time.sleep(10)
+            try:
+                bot.clear()
+                bot.http.connector = discord.utils.MISSING
+                bot.http._HTTPClient__session = discord.utils.MISSING
+            except Exception:
+                pass
