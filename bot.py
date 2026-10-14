@@ -2183,7 +2183,7 @@ class MusicBot(commands.Bot):
                 }
                 target_player.queue.append(track)
                 if not target_player.is_playing() and not target_player.is_paused():
-                    asyncio.create_task(play_next(g))
+                    self.loop.create_task(play_next(g))
 
                 return web.json_response({
                     "status": "ok",
@@ -2817,17 +2817,29 @@ async def ensure_vc(ctx: commands.Context) -> Optional[discord.VoiceClient]:
         await send_response(ctx, embed=err("You must join a voice channel first!"))
         return None
     ch = ctx.author.voice.channel
-    if p.voice and p.voice.is_connected():
-        if p.voice.channel.id != ch.id:
+
+    # Check guild voice client in discord.py
+    existing_vc = ctx.guild.voice_client
+    if existing_vc and existing_vc.is_connected():
+        p.voice = existing_vc
+        if existing_vc.channel.id != ch.id:
             p.is_connecting = True
             try:
-                await p.voice.move_to(ch)
+                await existing_vc.move_to(ch)
+            except Exception:
+                pass
             finally:
                 p.is_connecting = False
         return p.voice
+    elif existing_vc:
+        try:
+            await existing_vc.disconnect(force=True)
+        except Exception:
+            pass
+
     try:
         p.is_connecting = True
-        p.voice = await ch.connect(timeout=15, reconnect=True)
+        p.voice = await ch.connect(timeout=20, reconnect=True, self_deaf=True)
         if isinstance(ch, discord.StageChannel):
             try:
                 await ctx.guild.me.edit(suppress=False)
@@ -2970,7 +2982,7 @@ async def play_next(guild: discord.Guild, interaction: Optional[discord.Interact
                 print(f"❌ [Voice Playback Error] Guild {guild.id} after {elapsed:.1f}s: {error}")
             else:
                 print(f"✅ [Voice Playback Finished] Guild {guild.id} after {elapsed:.1f}s: {track.get('title')}")
-            asyncio.run_coroutine_threadsafe(play_next(guild), bot.loop)
+            bot.loop.call_soon_threadsafe(lambda: bot.loop.create_task(play_next(guild)))
 
         p.reset_start_time()
         if p.voice and (p.voice.is_playing() or p.voice.is_paused()):
