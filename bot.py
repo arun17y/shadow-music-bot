@@ -1306,7 +1306,7 @@ class GuildPlayer:
 #           LIVE PANEL EMBED
 # ─────────────────────────────────────────────
 
-def make_progress_bar(pos: int, total: int, width=12) -> str:
+def make_progress_bar(pos: int, total: int, width=13) -> str:
     if total <= 0:
         return "━" * width
     percentage = max(0.0, min(1.0, pos / total))
@@ -1314,9 +1314,13 @@ def make_progress_bar(pos: int, total: int, width=12) -> str:
     return "━" * idx + "🔘" + "─" * (width - 1 - idx)
 
 def panel_embed(p: GuildPlayer) -> discord.Embed:
-    e = discord.Embed(color=0x2B2D31)
-    bot_name = bot.user.name if (bot and bot.user) else "SHADOW CHEATS"
     avatar = bot.user.avatar.url if (bot and bot.user and bot.user.avatar) else None
+    e = discord.Embed(color=0x5865F2, timestamp=datetime.now(timezone.utc))
+    e.set_author(name="SHADOW CHEATS MUSIC PLAYER", icon_url=avatar)
+
+    loop_s = "Single" if p.loop == "track" else ("Queue" if p.loop == "queue" else "Off")
+    speed_s = f"{p.speed}x" if p.speed != 1.0 else "Normal"
+    vol_pct = int(p.volume * 100)
 
     if p.current:
         title = p.current.get("title", "Unknown Track")
@@ -1325,43 +1329,36 @@ def panel_embed(p: GuildPlayer) -> discord.Embed:
         author = p.current.get("uploader", "Unknown Artist")
         req_id = p.current.get("requester_id")
 
-        e.title = f"🎵 {title[:200]}"
-        e.url = url if url else None
-
         pos = p.position
         total = int(p.current.get("duration") or 0)
-        bar = make_progress_bar(pos, total)
+        bar = make_progress_bar(pos, total, width=12)
 
-        loop_s = "Track" if p.loop == "track" else ("Queue" if p.loop == "queue" else "Off")
-        speed_s = f"{p.speed}x" if p.speed != 1.0 else "Normal"
         req_str = f"<@{req_id}>" if req_id else "`AutoPlay`"
+        title_link = f"**[{title[:120]}]({url})**" if url else f"**{title[:120]}**"
 
         e.description = (
+            f"{title_link}\n\n"
             f"`{p.fmt(pos)}` {bar} `{dur}`\n\n"
-            f"• **Artist:** `{author}`\n"
-            f"• **Requester:** {req_str}\n"
-            f"• **Volume:** `{int(p.volume*100)}%` | **Loop:** `{loop_s}` | **Filter:** `{p.filter or 'None'}`"
+            f"👤 **Artist:** `{author[:35]}`\n"
+            f"🎧 **Requester:** {req_str}\n"
+            f"🔊 {vol_pct}% | Loop: {loop_s} | Speed: {speed_s} | Queue: {len(p.queue)} tracks"
         )
-
         if thumb := p.current.get("thumbnail"):
             e.set_thumbnail(url=thumb)
-        e.set_footer(text=f"Powered By {bot_name}", icon_url=avatar)
     else:
-        e.title = f"{bot_name} Player"
-        loop_s = "Track" if p.loop == "track" else ("Queue" if p.loop == "queue" else "Off")
-        speed_s = f"{p.speed}x" if p.speed != 1.0 else "Normal"
         e.description = (
             "*Nothing is currently playing.*\n"
             "Use `/play` or `/help` to start the vibe!\n\n"
-            f"🔊 `{int(p.volume*100)}%` | Loop: `{loop_s}` | Speed: `{speed_s}` | Queue: `{len(p.queue)} tracks`"
+            f"🔊 {vol_pct}% | Loop: {loop_s} | Speed: {speed_s} | Queue: {len(p.queue)} tracks"
         )
-        e.set_footer(text=f"Powered By {bot_name}", icon_url=avatar)
+    e.set_footer(text="Shadow Cheats Music", icon_url=avatar)
     return e
 
 # ─────────────────────────────────────────────
-#           MUSIC PANEL BUTTONS & SELECT
+#           MUSIC PANEL BUTTONS
 # ─────────────────────────────────────────────
 
+# Seek Modal for Music Panel
 class SeekModal(discord.ui.Modal, title="Seek to Position"):
     time_input = discord.ui.TextInput(
         label="Enter timestamp or seconds",
@@ -1414,100 +1411,10 @@ class SeekModal(discord.ui.Modal, title="Seek to Position"):
         except Exception:
             pass
 
-class MusicControlSelect(discord.ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="Rewind 15s", description="Skip backwards 15 seconds", emoji="⏪", value="rewind"),
-            discord.SelectOption(label="Forward 15s", description="Skip forward 15 seconds", emoji="⏩", value="forward"),
-            discord.SelectOption(label="Seek Timestamp", description="Jump to timestamp or percentage", emoji="⏱️", value="seek"),
-            discord.SelectOption(label="Toggle AutoPlay", description="Auto-play recommended tracks", emoji="✨", value="autoplay"),
-            discord.SelectOption(label="Filter: Lofi", description="Relaxing smooth lofi audio preset", emoji="☕", value="filter_lofi"),
-            discord.SelectOption(label="Filter: 8D", description="Surround rotating 8D stereo audio", emoji="🎛️", value="filter_8d"),
-            discord.SelectOption(label="Filter: Bass Boost", description="Deep amplified low frequencies", emoji="🎧", value="filter_bass"),
-            discord.SelectOption(label="Filter: Nightcore", description="Sped up high-pitched anime preset", emoji="🌙", value="filter_nightcore"),
-            discord.SelectOption(label="Clear Filters", description="Reset to clean lossless audio", emoji="📻", value="filter_clear"),
-            discord.SelectOption(label="Close Panel", description="Dismiss and close control panel", emoji="❌", value="close"),
-        ]
-        super().__init__(placeholder="↘ Select Audio Preset or Control", min_values=1, max_values=1, options=options, row=2)
-
-    async def callback(self, interaction: discord.Interaction):
-        p = bot.get_player(interaction.guild_id)
-        val = self.values[0]
-
-        if val == "rewind":
-            if not p.current:
-                return await interaction.response.send_message(embed=err("No track currently playing."), ephemeral=True)
-            pos = max(0, p.position - 15)
-            p.seek_offset = pos
-            p.start_time = time.time()
-            p.paused_at = None
-            p.restarting_track = True
-            if p.voice: p.voice.stop()
-            await interaction.response.defer()
-            await interaction.followup.send(embed=ok("Rewound 15s", f"Playback moved to **{_fmt(pos)}**."), ephemeral=True)
-
-        elif val == "forward":
-            if not p.current:
-                return await interaction.response.send_message(embed=err("No track currently playing."), ephemeral=True)
-            duration = int(p.current.get("duration") or 0)
-            pos = p.position + 15
-            if duration > 0 and pos >= duration:
-                return await interaction.response.send_message(embed=err("Cannot seek past the end of the song!"), ephemeral=True)
-            p.seek_offset = pos
-            p.start_time = time.time()
-            p.paused_at = None
-            p.restarting_track = True
-            if p.voice: p.voice.stop()
-            await interaction.response.defer()
-            await interaction.followup.send(embed=ok("Forwarded 15s", f"Playback moved to **{_fmt(pos)}**."), ephemeral=True)
-
-        elif val == "seek":
-            if not p.current:
-                return await interaction.response.send_message(embed=err("No track currently playing."), ephemeral=True)
-            await interaction.response.send_modal(SeekModal())
-
-        elif val == "autoplay":
-            p.autoplay = not p.autoplay
-            await interaction.response.defer()
-            await p.update_panel()
-            await interaction.followup.send(embed=ok(f"AutoPlay {'Enabled ✅' if p.autoplay else 'Disabled ❌'}"), ephemeral=True)
-
-        elif val.startswith("filter_"):
-            filt_name = val.replace("filter_", "")
-            if filt_name == "clear":
-                p.filter = None
-            else:
-                p.filter = filt_name
-            if p.current and p.voice:
-                p.seek_offset = p.position
-                p.start_time = time.time()
-                p.paused_at = None
-                p.restarting_track = True
-                p.voice.stop()
-            await interaction.response.defer()
-            await p.update_panel()
-            await interaction.followup.send(embed=ok(f"Filter set to **{p.filter or 'None'}**"), ephemeral=True)
-
-        elif val == "close":
-            if p.panel_msg and p.current:
-                try:
-                    await p.panel_msg.edit(embed=history_embed(p.current), view=None)
-                except Exception:
-                    pass
-                p.panel_msg = None
-            elif p.panel_msg:
-                try:
-                    await p.panel_msg.delete()
-                except Exception:
-                    pass
-                p.panel_msg = None
-            await interaction.response.send_message(embed=ok("Panel Closed", "Use `/panel` to reopen the player controls."), ephemeral=True)
-
 class MusicPanel(discord.ui.View):
     def __init__(self, guild_id: int):
         super().__init__(timeout=None)
         self.guild_id = guild_id
-        self.add_item(MusicControlSelect())
 
     def _p(self) -> GuildPlayer:
         return bot.get_player(self.guild_id)
@@ -1541,8 +1448,18 @@ class MusicPanel(discord.ui.View):
         except Exception:
             pass
 
-    # Row 0: Primary Playback Controls (5 buttons matching media_1791800552677_6f12268d.png)
-    @discord.ui.button(label="Back", emoji="⏮", style=discord.ButtonStyle.secondary, row=0)
+    # Row 0: Volume & Core Track Navigation
+    @discord.ui.button(label="Vol -", emoji="🔊", style=discord.ButtonStyle.secondary, row=0)
+    async def vol_down(self, i: discord.Interaction, b: discord.ui.Button):
+        p = self._p()
+        p.volume = max(0.0, round(p.volume - 0.1, 1))
+        if p.voice and p.voice.source:
+            p.voice.source.volume = p.volume
+        Database.set_volume(self.guild_id, int(p.volume * 100))
+        await self._update(i)
+        await self._toast(i, ok("Volume Down", f"Volume set to **{int(p.volume*100)}%**"))
+
+    @discord.ui.button(label="Back", emoji="⏮", style=discord.ButtonStyle.primary, row=0)
     async def back(self, i: discord.Interaction, b: discord.ui.Button):
         p = self._p()
         hist = list(p.history)
@@ -1574,7 +1491,7 @@ class MusicPanel(discord.ui.View):
             p.ensure_updater()
         await self._update(i)
 
-    @discord.ui.button(label="Skip", emoji="⏭", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="Skip", emoji="⏭", style=discord.ButtonStyle.primary, row=0)
     async def skip(self, i: discord.Interaction, b: discord.ui.Button):
         p = self._p()
         if p.voice and (p.is_playing() or p.is_paused()):
@@ -1582,36 +1499,59 @@ class MusicPanel(discord.ui.View):
         await self._update(i)
         await self._toast(i, ok("Skipped ⏭"))
 
-    @discord.ui.button(label="Stop", emoji="⏹", style=discord.ButtonStyle.danger, row=0)
-    async def stop_btn(self, i: discord.Interaction, b: discord.ui.Button):
+    @discord.ui.button(label="Vol +", emoji="🔊", style=discord.ButtonStyle.secondary, row=0)
+    async def vol_up(self, i: discord.Interaction, b: discord.ui.Button):
         p = self._p()
-        finished = p.current
-        p.queue.clear()
-        p.current = None
-        p.loop = "off"
-        is_247 = p.stay_247 or bool(Database.get_247(self.guild_id)[0])
-        if not is_247:
-            if p.voice:
-                p.voice.stop()
-                try: await p.voice.disconnect()
-                except Exception: pass
-                p.voice = None
-            msg_desc = "Queue cleared & voice disconnected."
-        else:
-            p.stay_247 = True
-            if p.voice:
-                p.voice.stop()
-            msg_desc = "Playback stopped & queue cleared. Bot remains in voice channel (24/7 active)."
+        p.volume = min(2.0, round(p.volume + 0.1, 1))
+        if p.voice and p.voice.source:
+            p.voice.source.volume = p.volume
+        Database.set_volume(self.guild_id, int(p.volume * 100))
+        await self._update(i)
+        await self._toast(i, ok("Volume Up", f"Volume set to **{int(p.volume*100)}%**"))
 
-        if p.panel_msg and finished:
-            try:
-                await p.panel_msg.edit(embed=history_embed(finished), view=None)
-            except Exception:
-                pass
-            p.panel_msg = None
-        await i.response.send_message(embed=ok("Stopped Playing", msg_desc), ephemeral=True)
+    # Row 1: Fast Seek & Jump Controls
+    @discord.ui.button(label="-15s", emoji="⏪", style=discord.ButtonStyle.primary, row=1)
+    async def rewind_15(self, i: discord.Interaction, b: discord.ui.Button):
+        p = self._p()
+        if not p.current:
+            return await self._toast(i, err("No track currently playing."))
+        pos = max(0, p.position - 15)
+        p.seek_offset = pos
+        p.start_time = time.time()
+        p.paused_at = None
+        p.restarting_track = True
+        if p.voice:
+            p.voice.stop()
+        await self._update(i)
+        await self._toast(i, ok("Rewound 15s", f"Playback moved to **{_fmt(pos)}**."))
 
-    @discord.ui.button(label="Shuffle", emoji="🔀", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="Seek", emoji="⏱️", style=discord.ButtonStyle.secondary, row=1)
+    async def seek_btn(self, i: discord.Interaction, b: discord.ui.Button):
+        p = self._p()
+        if not p.current:
+            return await self._toast(i, err("No track currently playing."))
+        await i.response.send_modal(SeekModal())
+
+    @discord.ui.button(label="+15s", emoji="⏩", style=discord.ButtonStyle.primary, row=1)
+    async def forward_15(self, i: discord.Interaction, b: discord.ui.Button):
+        p = self._p()
+        if not p.current:
+            return await self._toast(i, err("No track currently playing."))
+        duration = int(p.current.get("duration") or 0)
+        pos = p.position + 15
+        if duration > 0 and pos >= duration:
+            return await self._toast(i, err("Cannot seek past the end of the song!"))
+        p.seek_offset = pos
+        p.start_time = time.time()
+        p.paused_at = None
+        p.restarting_track = True
+        if p.voice:
+            p.voice.stop()
+        await self._update(i)
+        await self._toast(i, ok("Forwarded 15s", f"Playback moved to **{_fmt(pos)}**."))
+
+    # Row 2: Queue Modes & Stop
+    @discord.ui.button(label="Shuffle", emoji="🔀", style=discord.ButtonStyle.primary, row=2)
     async def shuffle(self, i: discord.Interaction, b: discord.ui.Button):
         p = self._p()
         if len(p.queue) < 2:
@@ -1622,28 +1562,7 @@ class MusicPanel(discord.ui.View):
         await self._update(i)
         await self._toast(i, ok("Shuffled Queue!", f"Shuffled {len(q)} tracks."))
 
-    # Row 1: Volume, Mode & Queue Controls (5 buttons matching media_1791800552677_6f12268d.png)
-    @discord.ui.button(label="Vol -", emoji="🔉", style=discord.ButtonStyle.secondary, row=1)
-    async def vol_down(self, i: discord.Interaction, b: discord.ui.Button):
-        p = self._p()
-        p.volume = max(0.0, round(p.volume - 0.1, 1))
-        if p.voice and p.voice.source:
-            p.voice.source.volume = p.volume
-        Database.set_volume(self.guild_id, int(p.volume * 100))
-        await self._update(i)
-        await self._toast(i, ok("Volume Down", f"Volume set to **{int(p.volume*100)}%**"))
-
-    @discord.ui.button(label="Vol +", emoji="🔊", style=discord.ButtonStyle.secondary, row=1)
-    async def vol_up(self, i: discord.Interaction, b: discord.ui.Button):
-        p = self._p()
-        p.volume = min(2.0, round(p.volume + 0.1, 1))
-        if p.voice and p.voice.source:
-            p.voice.source.volume = p.volume
-        Database.set_volume(self.guild_id, int(p.volume * 100))
-        await self._update(i)
-        await self._toast(i, ok("Volume Up", f"Volume set to **{int(p.volume*100)}%**"))
-
-    @discord.ui.button(label="Loop", emoji="🔁", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="Loop", emoji="🔁", style=discord.ButtonStyle.primary, row=2)
     async def loop_btn(self, i: discord.Interaction, b: discord.ui.Button):
         p = self._p()
         if p.loop == "off":
@@ -1655,9 +1574,46 @@ class MusicPanel(discord.ui.View):
         else:
             p.loop = "off"
             await self._toast(i, ok("Loop Disabled ❌"))
-        await self._update(i)
+        await i.response.edit_message(embed=panel_embed(p), view=self)
 
-    @discord.ui.button(label="Queue", emoji="📋", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="Stop", emoji="⏹", style=discord.ButtonStyle.primary, row=2)
+    async def stop_btn(self, i: discord.Interaction, b: discord.ui.Button):
+        p = self._p()
+        finished = p.current
+        p.queue.clear()
+        p.current = None
+        p.loop = "off"
+        if p.voice:
+            p.voice.stop()
+        
+        is_247 = p.stay_247 or bool(Database.get_247(self.guild_id)[0])
+        if not is_247:
+            if p.voice:
+                try: await p.voice.disconnect()
+                except Exception: pass
+                p.voice = None
+            msg_desc = "Queue cleared & voice disconnected."
+        else:
+            p.stay_247 = True
+            msg_desc = "Playback stopped & queue cleared. Bot remains in voice channel (24/7 active)."
+
+        if p.panel_msg and finished:
+            try:
+                await p.panel_msg.edit(embed=history_embed(finished), view=None)
+            except Exception:
+                pass
+            p.panel_msg = None
+        await i.response.send_message(embed=ok("Stopped Playing", msg_desc), ephemeral=True)
+
+    # Row 3: AutoPlay & Queue List
+    @discord.ui.button(label="AutoPlay", emoji="▶️", style=discord.ButtonStyle.primary, row=3)
+    async def autoplay_btn(self, i: discord.Interaction, b: discord.ui.Button):
+        p = self._p()
+        p.autoplay = not p.autoplay
+        await self._update(i)
+        await self._toast(i, ok(f"AutoPlay {'Enabled ✅' if p.autoplay else 'Disabled ❌'}"))
+
+    @discord.ui.button(label="Queue List", emoji="🎵", style=discord.ButtonStyle.primary, row=3)
     async def queue_btn(self, i: discord.Interaction, b: discord.ui.Button):
         p = self._p()
         if not p.queue and not p.current:
@@ -1669,9 +1625,10 @@ class MusicPanel(discord.ui.View):
             lines.append(f"`{idx}.` {t['title']} `{p.fmt(t.get('duration', 0))}`")
         if len(p.queue) > 10:
             lines.append(f"*...and {len(p.queue)-10} more tracks*")
-        await i.response.send_message(embed=discord.Embed(title="📋 Guild Music Queue", description="\n".join(lines), color=0x2B2D31), ephemeral=True)
+        await i.response.send_message(embed=discord.Embed(title="🎵 Queue List", description="\n".join(lines), color=0x2B2D31), ephemeral=True)
 
-    @discord.ui.button(label="Like", emoji="⭐", style=discord.ButtonStyle.secondary, row=1)
+    # Row 4: Like & Close Panel
+    @discord.ui.button(label="Like", emoji="⭐", style=discord.ButtonStyle.secondary, row=4)
     async def like_btn(self, i: discord.Interaction, b: discord.ui.Button):
         p = self._p()
         if not p.current:
@@ -1679,6 +1636,23 @@ class MusicPanel(discord.ui.View):
         track = p.current
         Database.like_track(i.user.id, track["url"], track["title"], track.get("uploader", "Unknown"), track.get("thumbnail", ""), track.get("duration", 0))
         await self._toast(i, ok("Song Liked", f"Added **{track['title']}** to your Liked tracks."))
+
+    @discord.ui.button(label="Close Panel", emoji="❌", style=discord.ButtonStyle.secondary, row=4)
+    async def close_panel_btn(self, i: discord.Interaction, b: discord.ui.Button):
+        p = self._p()
+        if p.panel_msg and p.current:
+            try:
+                await p.panel_msg.edit(embed=history_embed(p.current), view=None)
+            except Exception:
+                pass
+            p.panel_msg = None
+        elif p.panel_msg:
+            try:
+                await p.panel_msg.delete()
+            except Exception:
+                pass
+            p.panel_msg = None
+        await i.response.send_message(embed=ok("Panel Closed", "Use `/panel` or `.panel` to reopen the player."), ephemeral=True)
 
 # ─────────────────────────────────────────────
 #              BOT SYSTEM CLASS
