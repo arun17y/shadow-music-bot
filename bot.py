@@ -53,7 +53,33 @@ START_TIME = time.time()
 try:
     import discord.opus
     if not discord.opus.is_loaded():
-        for opus_lib in ['libopus.so.0', 'libopus.so', '/usr/lib/x86_64-linux-gnu/libopus.so.0', '/usr/lib/aarch64-linux-gnu/libopus.so.0', 'opus']:
+        _base_dir = os.path.dirname(os.path.abspath(__file__))
+        _opus_candidates = [
+            os.path.join(_base_dir, 'libopus-0.x64.dll'),
+            os.path.join(_base_dir, 'opus.dll'),
+            'libopus-0.x64.dll',
+            'opus.dll',
+            'opus',
+            'libopus.so.0',
+            'libopus.so',
+            '/usr/lib/x86_64-linux-gnu/libopus.so.0',
+            '/usr/lib/aarch64-linux-gnu/libopus.so.0',
+            '/usr/lib/x86_64-linux-gnu/libopus.so',
+            '/usr/lib/libopus.so.0',
+        ]
+        try:
+            import discord
+            _discord_bin = os.path.join(os.path.dirname(discord.__file__), 'bin')
+            if os.path.isdir(_discord_bin):
+                _opus_candidates.extend([
+                    os.path.join(_discord_bin, 'libopus-0.x64.dll'),
+                    os.path.join(_discord_bin, 'libopus-0.x86.dll'),
+                ])
+        except Exception:
+            pass
+        for opus_lib in _opus_candidates:
+            if not os.path.isabs(opus_lib) and not os.path.exists(opus_lib) and not opus_lib.endswith('.so') and not opus_lib.endswith('.so.0') and opus_lib != 'opus':
+                continue
             try:
                 discord.opus.load_opus(opus_lib)
                 if discord.opus.is_loaded():
@@ -61,8 +87,8 @@ try:
                     break
             except Exception:
                 pass
-except Exception:
-    pass
+except Exception as e:
+    print(f"⚠️ Opus loader exception: {e}")
 
 # In-memory circular log buffer for live debugging via /api/logs
 RECENT_LOGS = deque(maxlen=1000)
