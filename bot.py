@@ -976,57 +976,50 @@ class YTSource(discord.PCMVolumeTransformer):
     async def search(cls, query: str, loop) -> dict:
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = "in_playlist"
-        opts["cookiefile"] = None
+        opts["cookiefile"] = COOKIE_ARG
         opts["extractor_args"] = {
             "youtube": {
-                "player_client": ["android", "ios"]
+                "player_client": ["web", "mweb", "visionos", "android"]
             }
         }
         is_search = not query.startswith("http")
         q = f"ytsearch10:{query}" if is_search else query
             
         def run():
-            ytdl = yt_dlp.YoutubeDL(opts)
             try:
-                return ytdl.extract_info(q, download=False)
-            except Exception as e:
-                opts_web = opts.copy()
-                opts_web["extractor_args"] = {"youtube": {"player_client": ["web", "mweb"]}}
-                try:
-                    return yt_dlp.YoutubeDL(opts_web).extract_info(q, download=False)
-                except Exception:
-                    raise e
+                return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
+            except Exception:
+                opts_tv = opts.copy()
+                opts_tv["extractor_args"] = {"youtube": {"player_client": ["tv", "android_vr"]}}
+                return yt_dlp.YoutubeDL(opts_tv).extract_info(q, download=False)
 
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
             q_lower = query.lower()
-            candidates = []
+            selected = None
             for e in data["entries"]:
                 if not e: continue
                 dur = int(e.get("duration") or 0)
                 url = e.get("url") or e.get("webpage_url") or ""
                 title = (e.get("title") or "").lower()
+                # Strictly filter out YouTube Shorts
                 if "/shorts/" in url or "#shorts" in title or "#short" in title or (0 < dur < 60):
                     continue
+                # Filter out 1 hour / loop / extended unless explicitly requested
+                if not any(k in q_lower for k in ["1 hour", "1hr", "10 hour", "loop", "extended"]):
+                    if any(k in title for k in ["1 hour", "10 hour", "10 hrs", "1 hr loop", "[1 hour]"]):
+                        continue
                 if "slowed" not in q_lower and ("slowed" in title or "reverb" in title):
                     continue
                 if "sped" not in q_lower and "speed" not in q_lower and ("sped up" in title or "speed up" in title):
                     continue
                 if "edit" not in q_lower and ("[edit" in title or "(edit" in title or "edit audio" in title):
                     continue
-                score = 0
-                if "official" in title:
-                    score += 10
-                if "official video" in title or "official music video" in title:
-                    score += 5
-                if "official audio" in title:
-                    score += 4
-                candidates.append((score, e))
-            if candidates:
-                candidates.sort(key=lambda x: x[0], reverse=True)
-                data = candidates[0][1]
-            else:
-                data = data["entries"][0]
+                selected = e
+                break
+            if not selected:
+                selected = data["entries"][0]
+            data = selected
         if data and not data.get("webpage_url") and data.get("url"):
             data["webpage_url"] = data["url"]
         return data or {}
@@ -1035,10 +1028,10 @@ class YTSource(discord.PCMVolumeTransformer):
     async def extract_tracks(cls, query: str, loop) -> tuple:
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = "in_playlist"
-        opts["cookiefile"] = None
+        opts["cookiefile"] = COOKIE_ARG
         opts["extractor_args"] = {
             "youtube": {
-                "player_client": ["android", "ios"]
+                "player_client": ["web", "mweb", "visionos", "android"]
             }
         }
         
@@ -1056,16 +1049,12 @@ class YTSource(discord.PCMVolumeTransformer):
             q = query
         
         def run():
-            ytdl = yt_dlp.YoutubeDL(opts)
             try:
-                return ytdl.extract_info(q, download=False)
-            except Exception as e:
-                opts_web = opts.copy()
-                opts_web["extractor_args"] = {"youtube": {"player_client": ["web", "mweb"]}}
-                try:
-                    return yt_dlp.YoutubeDL(opts_web).extract_info(q, download=False)
-                except Exception:
-                    raise e
+                return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
+            except Exception:
+                opts_tv = opts.copy()
+                opts_tv["extractor_args"] = {"youtube": {"player_client": ["tv", "android_vr"]}}
+                return yt_dlp.YoutubeDL(opts_tv).extract_info(q, download=False)
 
         data = await loop.run_in_executor(None, run)
         if not data:
@@ -1075,32 +1064,28 @@ class YTSource(discord.PCMVolumeTransformer):
             entries = data.get("entries", [])
             if entries:
                 q_lower = query.lower()
-                candidates = []
+                selected = None
                 for e in entries:
                     if not e: continue
                     dur = int(e.get("duration") or 0)
                     url = e.get("url") or e.get("webpage_url") or ""
                     title = (e.get("title") or "").lower()
+                    # Strictly filter out YouTube Shorts
                     if "/shorts/" in url or "#shorts" in title or "#short" in title or (0 < dur < 60):
                         continue
+                    # Filter out 1 hour / loop / extended unless requested
+                    if not any(k in q_lower for k in ["1 hour", "1hr", "10 hour", "loop", "extended"]):
+                        if any(k in title for k in ["1 hour", "10 hour", "10 hrs", "1 hr loop", "[1 hour]"]):
+                            continue
                     if "slowed" not in q_lower and ("slowed" in title or "reverb" in title):
                         continue
                     if "sped" not in q_lower and "speed" not in q_lower and ("sped up" in title or "speed up" in title):
                         continue
                     if "edit" not in q_lower and ("[edit" in title or "(edit" in title or "edit audio" in title):
                         continue
-                    score = 0
-                    if "official" in title:
-                        score += 10
-                    if "official video" in title or "official music video" in title:
-                        score += 5
-                    if "official audio" in title:
-                        score += 4
-                    candidates.append((score, e))
-                if candidates:
-                    candidates.sort(key=lambda x: x[0], reverse=True)
-                    selected = candidates[0][1]
-                else:
+                    selected = e
+                    break
+                if not selected:
                     selected = entries[0]
                 if selected and not selected.get("webpage_url") and selected.get("url"):
                     selected["webpage_url"] = selected["url"]
@@ -1125,42 +1110,27 @@ class YTSource(discord.PCMVolumeTransformer):
         opts["extract_flat"] = False
 
         def run():
-            # 1. Primary: Direct Android / iOS mobile clients without cookies
-            opts_android = opts.copy()
-            opts_android["cookiefile"] = None
-            opts_android["extractor_args"] = {
-                "youtube": {
-                    "player_client": ["android", "ios"]
-                }
-            }
-            try:
-                res = yt_dlp.YoutubeDL(opts_android).extract_info(url, download=False)
-                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                    return res
-            except Exception as e:
-                print(f"⚠️ Mobile client extract attempt: {e}")
-
-            # 2. POT provider (bgutil HTTP) with web and mweb client without cookies
-            opts_pot = opts.copy()
-            opts_pot["cookiefile"] = None
-            opts_pot["extractor_args"] = {
+            # 1. Primary: Direct VisionOS / Web / MWeb with COOKIE_ARG
+            opts_primary = opts.copy()
+            opts_primary["cookiefile"] = COOKIE_ARG
+            opts_primary["extractor_args"] = {
                 "youtubepot-bgutilhttp": {
                     "base_url": ["http://127.0.0.1:4416"]
                 },
                 "youtube": {
-                    "player_client": ["web", "mweb"]
+                    "player_client": ["visionos", "web", "mweb", "android"]
                 }
             }
             try:
-                res = yt_dlp.YoutubeDL(opts_pot).extract_info(url, download=False)
+                res = yt_dlp.YoutubeDL(opts_primary).extract_info(url, download=False)
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
                     return res
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"⚠️ Primary client extract attempt: {e}")
 
-            # 3. TV & Android VR
+            # 2. TV & Android VR with cookies
             opts_tv = opts.copy()
-            opts_tv["cookiefile"] = None
+            opts_tv["cookiefile"] = COOKIE_ARG
             opts_tv["extractor_args"] = {
                 "youtube": {
                     "player_client": ["tv", "android_vr"]
@@ -1170,31 +1140,31 @@ class YTSource(discord.PCMVolumeTransformer):
                 res = yt_dlp.YoutubeDL(opts_tv).extract_info(url, download=False)
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
                     return res
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"⚠️ TV client extract attempt: {e}")
 
-            # 4. VisionOS client without cookies
-            opts_visionos = opts.copy()
-            opts_visionos["cookiefile"] = None
-            opts_visionos["extractor_args"] = {
+            # 3. Mobile Android / iOS without cookies (fallback)
+            opts_mobile = opts.copy()
+            opts_mobile["cookiefile"] = None
+            opts_mobile["extractor_args"] = {
                 "youtube": {
-                    "player_client": ["visionos"]
+                    "player_client": ["android", "ios"]
                 }
             }
             try:
-                res = yt_dlp.YoutubeDL(opts_visionos).extract_info(url, download=False)
+                res = yt_dlp.YoutubeDL(opts_mobile).extract_info(url, download=False)
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
                     return res
             except Exception:
                 pass
 
-            # 5. SoundCloud fallback
+            # 4. SoundCloud fallback (only if YouTube failed completely)
             try:
                 search_term = track_title
                 if not search_term:
                     vid_match = re.search(r'(?:v=|\/|youtu\.be\/)([0-9A-Za-z_-]{11})', url)
                     q = f"ytsearch1:{vid_match.group(1)}" if vid_match else url
-                    flat_ytdl = yt_dlp.YoutubeDL({"extract_flat": True, "quiet": True, "cookiefile": None})
+                    flat_ytdl = yt_dlp.YoutubeDL({"extract_flat": True, "quiet": True, "cookiefile": COOKIE_ARG})
                     info = flat_ytdl.extract_info(q, download=False)
                     entries = info.get("entries", [info]) if info else []
                     if entries and entries[0]:
@@ -1223,9 +1193,9 @@ class YTSource(discord.PCMVolumeTransformer):
             except Exception as sc_err:
                 print(f"⚠️ SoundCloud audio fallback failed: {sc_err}")
 
-            # 6. Default extract_info
+            # 5. Default extract_info
             opts_def = opts.copy()
-            opts_def["cookiefile"] = None
+            opts_def["cookiefile"] = COOKIE_ARG
             return yt_dlp.YoutubeDL(opts_def).extract_info(url, download=False)
 
         data = await loop.run_in_executor(None, run)
@@ -1239,12 +1209,12 @@ class YTSource(discord.PCMVolumeTransformer):
         headers = data.get("http_headers", {})
         
         # Select correct User-Agent based on client type in URL to bypass 403 Forbidden
-        if "c=ANDROID" in stream_url:
+        if "c=VISIONOS" in stream_url:
+            ua = "Mozilla/5.0 (VisionOS; Mobile/21N307) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        elif "c=ANDROID" in stream_url:
             ua = "com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip"
         elif "c=IOS" in stream_url:
             ua = "com.google.ios.youtube/19.45.4 (iPhone14,3; U; CPU iOS 17_7 like Mac OS X; en_US)"
-        elif "c=VISIONOS" in stream_url:
-            ua = "Mozilla/5.0 (VisionOS; Mobile/21N307) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
         elif "c=ANDROID_VR" in stream_url:
             ua = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
         else:
@@ -1252,8 +1222,6 @@ class YTSource(discord.PCMVolumeTransformer):
         
         ffmpeg_opts = get_ffmpeg_options(active_filter, speed, pitch)
         ffmpeg_opts["before_options"] += f' -user_agent "{ua}"'
-        if "googlevideo.com" not in stream_url:
-            ffmpeg_opts["before_options"] += ' -headers "Referer: https://www.youtube.com/"'
         
         if seek_time > 0:
             ffmpeg_opts["before_options"] += f" -ss {seek_time}"
