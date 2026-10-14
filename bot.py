@@ -972,22 +972,26 @@ class YTSource(discord.PCMVolumeTransformer):
     async def search(cls, query: str, loop) -> dict:
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = "in_playlist"
+        opts["cookiefile"] = None
+        opts["extractor_args"] = {
+            "youtube": {
+                "player_client": ["android", "ios"]
+            }
+        }
         is_search = not query.startswith("http")
-        q = f"ytsearch5:{query}" if is_search else query
+        q = f"ytsearch10:{query}" if is_search else query
             
         def run():
             ytdl = yt_dlp.YoutubeDL(opts)
             try:
                 return ytdl.extract_info(q, download=False)
             except Exception as e:
-                if opts.get("cookiefile"):
-                    opts_no = opts.copy()
-                    opts_no["cookiefile"] = None
-                    try:
-                        return yt_dlp.YoutubeDL(opts_no).extract_info(q, download=False)
-                    except Exception:
-                        pass
-                raise e
+                opts_web = opts.copy()
+                opts_web["extractor_args"] = {"youtube": {"player_client": ["web", "mweb"]}}
+                try:
+                    return yt_dlp.YoutubeDL(opts_web).extract_info(q, download=False)
+                except Exception:
+                    raise e
 
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
@@ -996,8 +1000,12 @@ class YTSource(discord.PCMVolumeTransformer):
                 if not e: continue
                 dur = e.get("duration") or 0
                 url = e.get("url") or e.get("webpage_url") or ""
-                if dur >= 60 and "/shorts/" not in url:
-                    valid.append(e)
+                title = (e.get("title") or "").lower()
+                if "/shorts/" in url or "#shorts" in title or "#short" in title:
+                    continue
+                if 0 < dur < 60:
+                    continue
+                valid.append(e)
             data = valid[0] if valid else data["entries"][0]
         if data and not data.get("webpage_url") and data.get("url"):
             data["webpage_url"] = data["url"]
@@ -1007,6 +1015,12 @@ class YTSource(discord.PCMVolumeTransformer):
     async def extract_tracks(cls, query: str, loop) -> tuple:
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = "in_playlist"
+        opts["cookiefile"] = None
+        opts["extractor_args"] = {
+            "youtube": {
+                "player_client": ["android", "ios"]
+            }
+        }
         
         # Check if query is a single YouTube video URL
         vid_match = re.search(r'(?:v=|\/|youtu\.be\/)([0-9A-Za-z_-]{11})', query)
@@ -1014,11 +1028,10 @@ class YTSource(discord.PCMVolumeTransformer):
         is_search = not query.startswith("http")
 
         if vid_match and not is_playlist_url:
-            # Query by 11-char video ID using ytsearch1 to bypass cloud IP bot verification
-            q = f"ytsearch1:{vid_match.group(1)}"
-            is_search = True
+            q = query
+            is_search = False
         elif is_search:
-            q = f"ytsearch5:{query}"
+            q = f"ytsearch10:{query}"
         else:
             q = query
         
@@ -1027,14 +1040,12 @@ class YTSource(discord.PCMVolumeTransformer):
             try:
                 return ytdl.extract_info(q, download=False)
             except Exception as e:
-                if opts.get("cookiefile"):
-                    opts_no = opts.copy()
-                    opts_no["cookiefile"] = None
-                    try:
-                        return yt_dlp.YoutubeDL(opts_no).extract_info(q, download=False)
-                    except Exception:
-                        pass
-                raise e
+                opts_web = opts.copy()
+                opts_web["extractor_args"] = {"youtube": {"player_client": ["web", "mweb"]}}
+                try:
+                    return yt_dlp.YoutubeDL(opts_web).extract_info(q, download=False)
+                except Exception:
+                    raise e
 
         data = await loop.run_in_executor(None, run)
         if not data:
@@ -1048,8 +1059,12 @@ class YTSource(discord.PCMVolumeTransformer):
                     if not e: continue
                     dur = e.get("duration") or 0
                     url = e.get("url") or e.get("webpage_url") or ""
-                    if dur >= 60 and "/shorts/" not in url:
-                        valid.append(e)
+                    title = (e.get("title") or "").lower()
+                    if "/shorts/" in url or "#shorts" in title or "#short" in title:
+                        continue
+                    if 0 < dur < 60:
+                        continue
+                    valid.append(e)
                 selected = valid[0] if valid else entries[0]
                 if selected and not selected.get("webpage_url") and selected.get("url"):
                     selected["webpage_url"] = selected["url"]
@@ -1072,8 +1087,24 @@ class YTSource(discord.PCMVolumeTransformer):
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = False
+
         def run():
-            # 1. Primary: POT provider (bgutil) with web and mweb client without cookies
+            # 1. Primary: Direct Android / iOS mobile clients without cookies
+            opts_android = opts.copy()
+            opts_android["cookiefile"] = None
+            opts_android["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["android", "ios"]
+                }
+            }
+            try:
+                res = yt_dlp.YoutubeDL(opts_android).extract_info(url, download=False)
+                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                    return res
+            except Exception as e:
+                print(f"⚠️ Mobile client extract attempt: {e}")
+
+            # 2. POT provider (bgutil HTTP) with web and mweb client without cookies
             opts_pot = opts.copy()
             opts_pot["cookiefile"] = None
             opts_pot["extractor_args"] = {
@@ -1088,71 +1119,10 @@ class YTSource(discord.PCMVolumeTransformer):
                 res = yt_dlp.YoutubeDL(opts_pot).extract_info(url, download=False)
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
                     return res
-            except Exception as e:
-                print(f"⚠️ POT HTTP extract attempt: {e}")
-
-            # 2. POT provider CLI fallback
-            opts_cli = opts.copy()
-            opts_cli["cookiefile"] = None
-            opts_cli["extractor_args"] = {
-                "youtubepot-bgutilcli": {
-                    "cli_path": ["/usr/local/bin/bgutil-pot"]
-                },
-                "youtube": {
-                    "player_client": ["web", "mweb"]
-                }
-            }
-            try:
-                res = yt_dlp.YoutubeDL(opts_cli).extract_info(url, download=False)
-                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                    return res
-            except Exception as e:
-                print(f"⚠️ POT CLI extract attempt: {e}")
-
-            # 3. visionos client (with cookies)
-            opts_visionos = opts.copy()
-            opts_visionos["extractor_args"] = {
-                "youtube": {
-                    "player_client": ["visionos"]
-                }
-            }
-            try:
-                res = yt_dlp.YoutubeDL(opts_visionos).extract_info(url, download=False)
-                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                    return res
             except Exception:
                 pass
 
-            # 4. visionos client without cookies
-            opts_visionos_no = opts.copy()
-            opts_visionos_no["cookiefile"] = None
-            opts_visionos_no["extractor_args"] = {
-                "youtube": {
-                    "player_client": ["visionos"]
-                }
-            }
-            try:
-                res = yt_dlp.YoutubeDL(opts_visionos_no).extract_info(url, download=False)
-                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                    return res
-            except Exception:
-                pass
-
-            # 5. Android / iOS client
-            opts_android = opts.copy()
-            opts_android["extractor_args"] = {
-                "youtube": {
-                    "player_client": ["android", "ios"]
-                }
-            }
-            try:
-                res = yt_dlp.YoutubeDL(opts_android).extract_info(url, download=False)
-                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                    return res
-            except Exception:
-                pass
-
-            # 6. TV & Android VR
+            # 3. TV & Android VR
             opts_tv = opts.copy()
             opts_tv["cookiefile"] = None
             opts_tv["extractor_args"] = {
@@ -1167,14 +1137,28 @@ class YTSource(discord.PCMVolumeTransformer):
             except Exception:
                 pass
 
-            # 7. Ultimate Fallback: Unblocked SoundCloud CDN Audio Stream
-            # Bypasses YouTube datacenter bot blocks entirely
+            # 4. VisionOS client without cookies
+            opts_visionos = opts.copy()
+            opts_visionos["cookiefile"] = None
+            opts_visionos["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["visionos"]
+                }
+            }
+            try:
+                res = yt_dlp.YoutubeDL(opts_visionos).extract_info(url, download=False)
+                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                    return res
+            except Exception:
+                pass
+
+            # 5. SoundCloud fallback
             try:
                 search_term = track_title
                 if not search_term:
                     vid_match = re.search(r'(?:v=|\/|youtu\.be\/)([0-9A-Za-z_-]{11})', url)
                     q = f"ytsearch1:{vid_match.group(1)}" if vid_match else url
-                    flat_ytdl = yt_dlp.YoutubeDL({"extract_flat": True, "quiet": True})
+                    flat_ytdl = yt_dlp.YoutubeDL({"extract_flat": True, "quiet": True, "cookiefile": None})
                     info = flat_ytdl.extract_info(q, download=False)
                     entries = info.get("entries", [info]) if info else []
                     if entries and entries[0]:
@@ -1182,7 +1166,7 @@ class YTSource(discord.PCMVolumeTransformer):
 
                 if search_term:
                     clean_term = re.sub(r'\(.*?\)|\[.*?\]', '', search_term).strip()
-                    print(f"🔄 YouTube blocked on cloud IP. Resolving audio via unblocked SoundCloud CDN for: {clean_term}")
+                    print(f"🔄 Resolving audio via SoundCloud CDN for: {clean_term}")
                     sc_opts = {
                         "format": "bestaudio/best",
                         "quiet": True,
@@ -1203,8 +1187,10 @@ class YTSource(discord.PCMVolumeTransformer):
             except Exception as sc_err:
                 print(f"⚠️ SoundCloud audio fallback failed: {sc_err}")
 
-            # Last try: standard extract_info with default opts to capture final error
-            return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
+            # 6. Default extract_info
+            opts_def = opts.copy()
+            opts_def["cookiefile"] = None
+            return yt_dlp.YoutubeDL(opts_def).extract_info(url, download=False)
 
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
@@ -1217,12 +1203,14 @@ class YTSource(discord.PCMVolumeTransformer):
         headers = data.get("http_headers", {})
         
         # Select correct User-Agent based on client type in URL to bypass 403 Forbidden
-        if "c=VISIONOS" in stream_url:
+        if "c=ANDROID" in stream_url:
+            ua = "com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip"
+        elif "c=IOS" in stream_url:
+            ua = "com.google.ios.youtube/19.45.4 (iPhone14,3; U; CPU iOS 17_7 like Mac OS X; en_US)"
+        elif "c=VISIONOS" in stream_url:
             ua = "Mozilla/5.0 (VisionOS; Mobile/21N307) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
         elif "c=ANDROID_VR" in stream_url:
             ua = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
-        elif "c=ANDROID" in stream_url:
-            ua = "com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip"
         else:
             ua = headers.get("User-Agent", headers.get("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"))
         
@@ -1318,7 +1306,7 @@ class GuildPlayer:
 #           LIVE PANEL EMBED
 # ─────────────────────────────────────────────
 
-def make_progress_bar(pos: int, total: int, width=13) -> str:
+def make_progress_bar(pos: int, total: int, width=12) -> str:
     if total <= 0:
         return "━" * width
     percentage = max(0.0, min(1.0, pos / total))
@@ -1326,13 +1314,9 @@ def make_progress_bar(pos: int, total: int, width=13) -> str:
     return "━" * idx + "🔘" + "─" * (width - 1 - idx)
 
 def panel_embed(p: GuildPlayer) -> discord.Embed:
+    e = discord.Embed(color=0x2B2D31)
+    bot_name = bot.user.name if (bot and bot.user) else "SHADOW CHEATS"
     avatar = bot.user.avatar.url if (bot and bot.user and bot.user.avatar) else None
-    e = discord.Embed(color=0x5865F2, timestamp=datetime.now(timezone.utc))
-    e.set_author(name="SHADOW CHEATS MUSIC PLAYER", icon_url=avatar)
-
-    loop_s = "Single" if p.loop == "track" else ("Queue" if p.loop == "queue" else "Off")
-    speed_s = f"{p.speed}x" if p.speed != 1.0 else "Normal"
-    vol_pct = int(p.volume * 100)
 
     if p.current:
         title = p.current.get("title", "Unknown Track")
@@ -1341,36 +1325,43 @@ def panel_embed(p: GuildPlayer) -> discord.Embed:
         author = p.current.get("uploader", "Unknown Artist")
         req_id = p.current.get("requester_id")
 
+        e.title = f"🎵 {title[:200]}"
+        e.url = url if url else None
+
         pos = p.position
         total = int(p.current.get("duration") or 0)
-        bar = make_progress_bar(pos, total, width=12)
+        bar = make_progress_bar(pos, total)
 
+        loop_s = "Track" if p.loop == "track" else ("Queue" if p.loop == "queue" else "Off")
+        speed_s = f"{p.speed}x" if p.speed != 1.0 else "Normal"
         req_str = f"<@{req_id}>" if req_id else "`AutoPlay`"
-        title_link = f"**[{title[:120]}]({url})**" if url else f"**{title[:120]}**"
 
         e.description = (
-            f"{title_link}\n\n"
             f"`{p.fmt(pos)}` {bar} `{dur}`\n\n"
-            f"👤 **Artist:** `{author[:35]}`\n"
-            f"🎧 **Requester:** {req_str}\n"
-            f"🔊 {vol_pct}% | Loop: {loop_s} | Speed: {speed_s} | Queue: {len(p.queue)} tracks"
+            f"• **Artist:** `{author}`\n"
+            f"• **Requester:** {req_str}\n"
+            f"• **Volume:** `{int(p.volume*100)}%` | **Loop:** `{loop_s}` | **Filter:** `{p.filter or 'None'}`"
         )
+
         if thumb := p.current.get("thumbnail"):
             e.set_thumbnail(url=thumb)
+        e.set_footer(text=f"Powered By {bot_name}", icon_url=avatar)
     else:
+        e.title = f"{bot_name} Player"
+        loop_s = "Track" if p.loop == "track" else ("Queue" if p.loop == "queue" else "Off")
+        speed_s = f"{p.speed}x" if p.speed != 1.0 else "Normal"
         e.description = (
             "*Nothing is currently playing.*\n"
             "Use `/play` or `/help` to start the vibe!\n\n"
-            f"🔊 {vol_pct}% | Loop: {loop_s} | Speed: {speed_s} | Queue: {len(p.queue)} tracks"
+            f"🔊 `{int(p.volume*100)}%` | Loop: `{loop_s}` | Speed: `{speed_s}` | Queue: `{len(p.queue)} tracks`"
         )
-    e.set_footer(text="Shadow Cheats Music", icon_url=avatar)
+        e.set_footer(text=f"Powered By {bot_name}", icon_url=avatar)
     return e
 
 # ─────────────────────────────────────────────
-#           MUSIC PANEL BUTTONS
+#           MUSIC PANEL BUTTONS & SELECT
 # ─────────────────────────────────────────────
 
-# Seek Modal for Music Panel
 class SeekModal(discord.ui.Modal, title="Seek to Position"):
     time_input = discord.ui.TextInput(
         label="Enter timestamp or seconds",
@@ -1423,10 +1414,100 @@ class SeekModal(discord.ui.Modal, title="Seek to Position"):
         except Exception:
             pass
 
+class MusicControlSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="Rewind 15s", description="Skip backwards 15 seconds", emoji="⏪", value="rewind"),
+            discord.SelectOption(label="Forward 15s", description="Skip forward 15 seconds", emoji="⏩", value="forward"),
+            discord.SelectOption(label="Seek Timestamp", description="Jump to timestamp or percentage", emoji="⏱️", value="seek"),
+            discord.SelectOption(label="Toggle AutoPlay", description="Auto-play recommended tracks", emoji="✨", value="autoplay"),
+            discord.SelectOption(label="Filter: Lofi", description="Relaxing smooth lofi audio preset", emoji="☕", value="filter_lofi"),
+            discord.SelectOption(label="Filter: 8D", description="Surround rotating 8D stereo audio", emoji="🎛️", value="filter_8d"),
+            discord.SelectOption(label="Filter: Bass Boost", description="Deep amplified low frequencies", emoji="🎧", value="filter_bass"),
+            discord.SelectOption(label="Filter: Nightcore", description="Sped up high-pitched anime preset", emoji="🌙", value="filter_nightcore"),
+            discord.SelectOption(label="Clear Filters", description="Reset to clean lossless audio", emoji="📻", value="filter_clear"),
+            discord.SelectOption(label="Close Panel", description="Dismiss and close control panel", emoji="❌", value="close"),
+        ]
+        super().__init__(placeholder="↘ Select Audio Preset or Control", min_values=1, max_values=1, options=options, row=2)
+
+    async def callback(self, interaction: discord.Interaction):
+        p = bot.get_player(interaction.guild_id)
+        val = self.values[0]
+
+        if val == "rewind":
+            if not p.current:
+                return await interaction.response.send_message(embed=err("No track currently playing."), ephemeral=True)
+            pos = max(0, p.position - 15)
+            p.seek_offset = pos
+            p.start_time = time.time()
+            p.paused_at = None
+            p.restarting_track = True
+            if p.voice: p.voice.stop()
+            await interaction.response.defer()
+            await interaction.followup.send(embed=ok("Rewound 15s", f"Playback moved to **{_fmt(pos)}**."), ephemeral=True)
+
+        elif val == "forward":
+            if not p.current:
+                return await interaction.response.send_message(embed=err("No track currently playing."), ephemeral=True)
+            duration = int(p.current.get("duration") or 0)
+            pos = p.position + 15
+            if duration > 0 and pos >= duration:
+                return await interaction.response.send_message(embed=err("Cannot seek past the end of the song!"), ephemeral=True)
+            p.seek_offset = pos
+            p.start_time = time.time()
+            p.paused_at = None
+            p.restarting_track = True
+            if p.voice: p.voice.stop()
+            await interaction.response.defer()
+            await interaction.followup.send(embed=ok("Forwarded 15s", f"Playback moved to **{_fmt(pos)}**."), ephemeral=True)
+
+        elif val == "seek":
+            if not p.current:
+                return await interaction.response.send_message(embed=err("No track currently playing."), ephemeral=True)
+            await interaction.response.send_modal(SeekModal())
+
+        elif val == "autoplay":
+            p.autoplay = not p.autoplay
+            await interaction.response.defer()
+            await p.update_panel()
+            await interaction.followup.send(embed=ok(f"AutoPlay {'Enabled ✅' if p.autoplay else 'Disabled ❌'}"), ephemeral=True)
+
+        elif val.startswith("filter_"):
+            filt_name = val.replace("filter_", "")
+            if filt_name == "clear":
+                p.filter = None
+            else:
+                p.filter = filt_name
+            if p.current and p.voice:
+                p.seek_offset = p.position
+                p.start_time = time.time()
+                p.paused_at = None
+                p.restarting_track = True
+                p.voice.stop()
+            await interaction.response.defer()
+            await p.update_panel()
+            await interaction.followup.send(embed=ok(f"Filter set to **{p.filter or 'None'}**"), ephemeral=True)
+
+        elif val == "close":
+            if p.panel_msg and p.current:
+                try:
+                    await p.panel_msg.edit(embed=history_embed(p.current), view=None)
+                except Exception:
+                    pass
+                p.panel_msg = None
+            elif p.panel_msg:
+                try:
+                    await p.panel_msg.delete()
+                except Exception:
+                    pass
+                p.panel_msg = None
+            await interaction.response.send_message(embed=ok("Panel Closed", "Use `/panel` to reopen the player controls."), ephemeral=True)
+
 class MusicPanel(discord.ui.View):
     def __init__(self, guild_id: int):
         super().__init__(timeout=None)
         self.guild_id = guild_id
+        self.add_item(MusicControlSelect())
 
     def _p(self) -> GuildPlayer:
         return bot.get_player(self.guild_id)
@@ -1460,18 +1541,8 @@ class MusicPanel(discord.ui.View):
         except Exception:
             pass
 
-    # Row 0: Volume & Core Track Navigation
-    @discord.ui.button(label="Vol -", emoji="🔊", style=discord.ButtonStyle.secondary, row=0)
-    async def vol_down(self, i: discord.Interaction, b: discord.ui.Button):
-        p = self._p()
-        p.volume = max(0.0, round(p.volume - 0.1, 1))
-        if p.voice and p.voice.source:
-            p.voice.source.volume = p.volume
-        Database.set_volume(self.guild_id, int(p.volume * 100))
-        await self._update(i)
-        await self._toast(i, ok("Volume Down", f"Volume set to **{int(p.volume*100)}%**"))
-
-    @discord.ui.button(label="Back", emoji="⏮", style=discord.ButtonStyle.primary, row=0)
+    # Row 0: Primary Playback Controls (5 buttons matching media_1791800552677_6f12268d.png)
+    @discord.ui.button(label="Back", emoji="⏮", style=discord.ButtonStyle.secondary, row=0)
     async def back(self, i: discord.Interaction, b: discord.ui.Button):
         p = self._p()
         hist = list(p.history)
@@ -1503,7 +1574,7 @@ class MusicPanel(discord.ui.View):
             p.ensure_updater()
         await self._update(i)
 
-    @discord.ui.button(label="Skip", emoji="⏭", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="Skip", emoji="⏭", style=discord.ButtonStyle.secondary, row=0)
     async def skip(self, i: discord.Interaction, b: discord.ui.Button):
         p = self._p()
         if p.voice and (p.is_playing() or p.is_paused()):
@@ -1511,59 +1582,36 @@ class MusicPanel(discord.ui.View):
         await self._update(i)
         await self._toast(i, ok("Skipped ⏭"))
 
-    @discord.ui.button(label="Vol +", emoji="🔊", style=discord.ButtonStyle.secondary, row=0)
-    async def vol_up(self, i: discord.Interaction, b: discord.ui.Button):
+    @discord.ui.button(label="Stop", emoji="⏹", style=discord.ButtonStyle.danger, row=0)
+    async def stop_btn(self, i: discord.Interaction, b: discord.ui.Button):
         p = self._p()
-        p.volume = min(2.0, round(p.volume + 0.1, 1))
-        if p.voice and p.voice.source:
-            p.voice.source.volume = p.volume
-        Database.set_volume(self.guild_id, int(p.volume * 100))
-        await self._update(i)
-        await self._toast(i, ok("Volume Up", f"Volume set to **{int(p.volume*100)}%**"))
+        finished = p.current
+        p.queue.clear()
+        p.current = None
+        p.loop = "off"
+        is_247 = p.stay_247 or bool(Database.get_247(self.guild_id)[0])
+        if not is_247:
+            if p.voice:
+                p.voice.stop()
+                try: await p.voice.disconnect()
+                except Exception: pass
+                p.voice = None
+            msg_desc = "Queue cleared & voice disconnected."
+        else:
+            p.stay_247 = True
+            if p.voice:
+                p.voice.stop()
+            msg_desc = "Playback stopped & queue cleared. Bot remains in voice channel (24/7 active)."
 
-    # Row 1: Fast Seek & Jump Controls
-    @discord.ui.button(label="-15s", emoji="⏪", style=discord.ButtonStyle.primary, row=1)
-    async def rewind_15(self, i: discord.Interaction, b: discord.ui.Button):
-        p = self._p()
-        if not p.current:
-            return await self._toast(i, err("No track currently playing."))
-        pos = max(0, p.position - 15)
-        p.seek_offset = pos
-        p.start_time = time.time()
-        p.paused_at = None
-        p.restarting_track = True
-        if p.voice:
-            p.voice.stop()
-        await self._update(i)
-        await self._toast(i, ok("Rewound 15s", f"Playback moved to **{_fmt(pos)}**."))
+        if p.panel_msg and finished:
+            try:
+                await p.panel_msg.edit(embed=history_embed(finished), view=None)
+            except Exception:
+                pass
+            p.panel_msg = None
+        await i.response.send_message(embed=ok("Stopped Playing", msg_desc), ephemeral=True)
 
-    @discord.ui.button(label="Seek", emoji="⏱️", style=discord.ButtonStyle.secondary, row=1)
-    async def seek_btn(self, i: discord.Interaction, b: discord.ui.Button):
-        p = self._p()
-        if not p.current:
-            return await self._toast(i, err("No track currently playing."))
-        await i.response.send_modal(SeekModal())
-
-    @discord.ui.button(label="+15s", emoji="⏩", style=discord.ButtonStyle.primary, row=1)
-    async def forward_15(self, i: discord.Interaction, b: discord.ui.Button):
-        p = self._p()
-        if not p.current:
-            return await self._toast(i, err("No track currently playing."))
-        duration = int(p.current.get("duration") or 0)
-        pos = p.position + 15
-        if duration > 0 and pos >= duration:
-            return await self._toast(i, err("Cannot seek past the end of the song!"))
-        p.seek_offset = pos
-        p.start_time = time.time()
-        p.paused_at = None
-        p.restarting_track = True
-        if p.voice:
-            p.voice.stop()
-        await self._update(i)
-        await self._toast(i, ok("Forwarded 15s", f"Playback moved to **{_fmt(pos)}**."))
-
-    # Row 2: Queue Modes & Stop
-    @discord.ui.button(label="Shuffle", emoji="🔀", style=discord.ButtonStyle.primary, row=2)
+    @discord.ui.button(label="Shuffle", emoji="🔀", style=discord.ButtonStyle.secondary, row=0)
     async def shuffle(self, i: discord.Interaction, b: discord.ui.Button):
         p = self._p()
         if len(p.queue) < 2:
@@ -1574,7 +1622,28 @@ class MusicPanel(discord.ui.View):
         await self._update(i)
         await self._toast(i, ok("Shuffled Queue!", f"Shuffled {len(q)} tracks."))
 
-    @discord.ui.button(label="Loop", emoji="🔁", style=discord.ButtonStyle.primary, row=2)
+    # Row 1: Volume, Mode & Queue Controls (5 buttons matching media_1791800552677_6f12268d.png)
+    @discord.ui.button(label="Vol -", emoji="🔉", style=discord.ButtonStyle.secondary, row=1)
+    async def vol_down(self, i: discord.Interaction, b: discord.ui.Button):
+        p = self._p()
+        p.volume = max(0.0, round(p.volume - 0.1, 1))
+        if p.voice and p.voice.source:
+            p.voice.source.volume = p.volume
+        Database.set_volume(self.guild_id, int(p.volume * 100))
+        await self._update(i)
+        await self._toast(i, ok("Volume Down", f"Volume set to **{int(p.volume*100)}%**"))
+
+    @discord.ui.button(label="Vol +", emoji="🔊", style=discord.ButtonStyle.secondary, row=1)
+    async def vol_up(self, i: discord.Interaction, b: discord.ui.Button):
+        p = self._p()
+        p.volume = min(2.0, round(p.volume + 0.1, 1))
+        if p.voice and p.voice.source:
+            p.voice.source.volume = p.volume
+        Database.set_volume(self.guild_id, int(p.volume * 100))
+        await self._update(i)
+        await self._toast(i, ok("Volume Up", f"Volume set to **{int(p.volume*100)}%**"))
+
+    @discord.ui.button(label="Loop", emoji="🔁", style=discord.ButtonStyle.secondary, row=1)
     async def loop_btn(self, i: discord.Interaction, b: discord.ui.Button):
         p = self._p()
         if p.loop == "off":
@@ -1586,46 +1655,9 @@ class MusicPanel(discord.ui.View):
         else:
             p.loop = "off"
             await self._toast(i, ok("Loop Disabled ❌"))
-        await i.response.edit_message(embed=panel_embed(p), view=self)
-
-    @discord.ui.button(label="Stop", emoji="⏹", style=discord.ButtonStyle.primary, row=2)
-    async def stop_btn(self, i: discord.Interaction, b: discord.ui.Button):
-        p = self._p()
-        finished = p.current
-        p.queue.clear()
-        p.current = None
-        p.loop = "off"
-        if p.voice:
-            p.voice.stop()
-        
-        is_247 = p.stay_247 or bool(Database.get_247(self.guild_id)[0])
-        if not is_247:
-            if p.voice:
-                try: await p.voice.disconnect()
-                except Exception: pass
-                p.voice = None
-            msg_desc = "Queue cleared & voice disconnected."
-        else:
-            p.stay_247 = True
-            msg_desc = "Playback stopped & queue cleared. Bot remains in voice channel (24/7 active)."
-
-        if p.panel_msg and finished:
-            try:
-                await p.panel_msg.edit(embed=history_embed(finished), view=None)
-            except Exception:
-                pass
-            p.panel_msg = None
-        await i.response.send_message(embed=ok("Stopped Playing", msg_desc), ephemeral=True)
-
-    # Row 3: AutoPlay & Queue List
-    @discord.ui.button(label="AutoPlay", emoji="▶️", style=discord.ButtonStyle.primary, row=3)
-    async def autoplay_btn(self, i: discord.Interaction, b: discord.ui.Button):
-        p = self._p()
-        p.autoplay = not p.autoplay
         await self._update(i)
-        await self._toast(i, ok(f"AutoPlay {'Enabled ✅' if p.autoplay else 'Disabled ❌'}"))
 
-    @discord.ui.button(label="Queue List", emoji="🎵", style=discord.ButtonStyle.primary, row=3)
+    @discord.ui.button(label="Queue", emoji="📋", style=discord.ButtonStyle.secondary, row=1)
     async def queue_btn(self, i: discord.Interaction, b: discord.ui.Button):
         p = self._p()
         if not p.queue and not p.current:
@@ -1637,10 +1669,9 @@ class MusicPanel(discord.ui.View):
             lines.append(f"`{idx}.` {t['title']} `{p.fmt(t.get('duration', 0))}`")
         if len(p.queue) > 10:
             lines.append(f"*...and {len(p.queue)-10} more tracks*")
-        await i.response.send_message(embed=discord.Embed(title="🎵 Queue List", description="\n".join(lines), color=0x2B2D31), ephemeral=True)
+        await i.response.send_message(embed=discord.Embed(title="📋 Guild Music Queue", description="\n".join(lines), color=0x2B2D31), ephemeral=True)
 
-    # Row 4: Like & Close Panel
-    @discord.ui.button(label="Like", emoji="⭐", style=discord.ButtonStyle.secondary, row=4)
+    @discord.ui.button(label="Like", emoji="⭐", style=discord.ButtonStyle.secondary, row=1)
     async def like_btn(self, i: discord.Interaction, b: discord.ui.Button):
         p = self._p()
         if not p.current:
@@ -1648,23 +1679,6 @@ class MusicPanel(discord.ui.View):
         track = p.current
         Database.like_track(i.user.id, track["url"], track["title"], track.get("uploader", "Unknown"), track.get("thumbnail", ""), track.get("duration", 0))
         await self._toast(i, ok("Song Liked", f"Added **{track['title']}** to your Liked tracks."))
-
-    @discord.ui.button(label="Close Panel", emoji="❌", style=discord.ButtonStyle.secondary, row=4)
-    async def close_panel_btn(self, i: discord.Interaction, b: discord.ui.Button):
-        p = self._p()
-        if p.panel_msg and p.current:
-            try:
-                await p.panel_msg.edit(embed=history_embed(p.current), view=None)
-            except Exception:
-                pass
-            p.panel_msg = None
-        elif p.panel_msg:
-            try:
-                await p.panel_msg.delete()
-            except Exception:
-                pass
-            p.panel_msg = None
-        await i.response.send_message(embed=ok("Panel Closed", "Use `/panel` or `.panel` to reopen the player."), ephemeral=True)
 
 # ─────────────────────────────────────────────
 #              BOT SYSTEM CLASS
