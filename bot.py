@@ -102,31 +102,28 @@ sys.stderr = OutputTee(sys.stderr)
 REQUIRED = ["discord.py>=2.3.0", "yt-dlp", "PyNaCl", "aiohttp", "psutil", "davey"]
 
 def auto_install():
-    print("🔧 Checking dependencies...")
-    print("  📦 Upgrading yt-dlp to the latest version...")
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-U", "yt-dlp", "--quiet"])
-        print("  ✅ yt-dlp upgraded!")
-    except Exception as e:
-        print(f"  ⚠️ Failed to upgrade yt-dlp: {e}")
-        
+    missing = []
     for pkg in REQUIRED:
-        if pkg.startswith("yt-dlp"):
-            continue
         name = pkg.split(">=")[0]
         import_name = {"discord.py": "discord", "PyNaCl": "nacl"}.get(name, name.replace("-", "_"))
         try:
             importlib.import_module(import_name)
-            print(f"  ✅ {name}")
         except ImportError:
-            print(f"  📦 Installing {pkg}...")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "--quiet"])
-            print(f"  ✅ {name} installed!")
+            missing.append(pkg)
+    if not missing:
+        return
+    for pkg in missing:
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "--quiet", "--break-system-packages"])
+        except Exception:
+            try:
+                subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "--quiet"])
+            except Exception as e:
+                print(f"  ⚠️ Failed to install {pkg}: {e}")
     try:
         subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
-        print("  ✅ ffmpeg found")
     except Exception:
-        print("  ⚠️  FFmpeg check skipped or not found. Ensuring PATH setup.")
+        pass
 
 auto_install()
 
@@ -1724,14 +1721,14 @@ class MusicBot(commands.Bot):
         return commands.when_mentioned_or(*unique_prefixes)(bot, message)
 
     async def setup_hook(self):
-        await self.start_bgutil_pot_server()
         await self.start_health_server()
+        await self.start_bgutil_pot_server()
 
     async def start_bgutil_pot_server(self):
         import shutil, subprocess
         bgutil_path = shutil.which("bgutil-pot") or "/usr/local/bin/bgutil-pot"
         if os.path.exists(bgutil_path) or shutil.which("bgutil-pot"):
-            cmd = [bgutil_path, "server", "--host", "0.0.0.0", "--port", "4416"]
+            cmd = [bgutil_path, "server", "--host", "127.0.0.1", "--port", "4416"]
             try:
                 self.bgutil_proc = subprocess.Popen(
                     cmd,
@@ -2289,6 +2286,13 @@ class MusicBot(commands.Bot):
             site = web.TCPSite(runner, "0.0.0.0", port)
             await site.start()
             print(f"🌐 24/7 Web Dashboard & Health Server running on http://0.0.0.0:{port} (Endpoint: /health)")
+            if port != 10000:
+                try:
+                    site_alt = web.TCPSite(runner, "0.0.0.0", 10000)
+                    await site_alt.start()
+                    print("🌐 Dual-listen fallback active on port 10000")
+                except Exception:
+                    pass
         except Exception as e:
             print(f"⚠️ Health server error: {e}")
 
@@ -5076,7 +5080,9 @@ if __name__ == "__main__":
         print(" Please open config.json and replace 'YOUR_DISCORD_BOT_TOKEN_HERE'")
         print(" with your actual Discord Bot Token from the developer portal.")
         print("═"*60 + "\n")
-        input("Press Enter to exit...")
+        if sys.stdin.isatty():
+            try: input("Press Enter to exit...")
+            except Exception: pass
         sys.exit(1)
         
     while True:

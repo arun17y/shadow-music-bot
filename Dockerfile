@@ -27,7 +27,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY . .
 
 # Expose Render web health port
-EXPOSE 3005
+EXPOSE 3005 10000
 
 # Run the bot
 CMD ["python", "bot.py"]

@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -15,6 +15,7 @@ ffmpeg/bin/
 # Local databases & logs
 logs/
 *.log
+*.db
 
 # Sensitive environment variables
 .env
