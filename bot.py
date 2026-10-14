@@ -5359,9 +5359,11 @@ if __name__ == "__main__":
             except Exception: pass
         sys.exit(1)
         
+    rate_limit_backoff = 60
     while True:
         try:
             bot.run(BOT_TOKEN)
+            rate_limit_backoff = 60
             break
         except discord.errors.LoginFailure:
             print("\n" + "═"*60)
@@ -5371,8 +5373,9 @@ if __name__ == "__main__":
         except Exception as e:
             err_str = str(e)
             if "429" in err_str or "1015" in err_str or "rate limit" in err_str.lower():
-                print(f"⚠️ Discord Cloudflare Gateway Rate Limit encountered. Backing off for 45 seconds before reconnecting...")
-                time.sleep(45)
+                print(f"⚠️ Discord Cloudflare Gateway Rate Limit encountered. Backing off for {rate_limit_backoff} seconds before reconnecting...")
+                time.sleep(rate_limit_backoff)
+                rate_limit_backoff = min(300, rate_limit_backoff + 60)
             else:
                 print(f"⚠️ Gateway connection error: {e}. Retrying connection in 10 seconds...")
                 time.sleep(10)
