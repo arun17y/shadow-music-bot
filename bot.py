@@ -891,7 +891,7 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "bestaudio/best",
+    "format": "bestaudio/18/best",
     "noplaylist": False,
     "nocheckcertificate": True,
     "ignoreerrors": False,
@@ -902,7 +902,7 @@ YTDL_OPTIONS = {
     "js_runtimes": {"node": {}},
     "extractor_args": {
         "youtube": {
-            "player_client": ["visionos", "web", "mweb", "android"]
+            "player_client": ["android", "mweb"]
         }
     },
 }
@@ -1090,7 +1090,7 @@ class YTSource(discord.PCMVolumeTransformer):
         opts["cookiefile"] = COOKIE_ARG
         opts["extractor_args"] = {
             "youtube": {
-                "player_client": ["visionos", "web", "mweb", "android"]
+                "player_client": ["android", "mweb"]
             }
         }
         
@@ -1187,7 +1187,7 @@ class YTSource(discord.PCMVolumeTransformer):
                 opts_chrome["impersonate"] = CHROME_TARGET
             opts_chrome["extractor_args"] = {
                 "youtube": {
-                    "player_client": ["visionos", "web", "mweb", "android"]
+                    "player_client": ["android", "mweb"]
                 }
             }
             try:
