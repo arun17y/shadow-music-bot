@@ -866,7 +866,7 @@ YTDL_OPTIONS = {
 #                 EMBED HELPERS (MODERN UI)
 # ─────────────────────────────────────────────
 
-def make_embed(title="", desc="", color=0x5865F2) -> discord.Embed:
+def make_embed(title="", desc="", color=0x2B2D31) -> discord.Embed:
     return discord.Embed(title=title[:256] if title else None, description=desc, color=color)
 
 async def send_response(ctx: commands.Context, embed: discord.Embed, view: Optional[discord.ui.View] = None, delete_after: Optional[float] = None) -> Optional[discord.Message]:
@@ -913,16 +913,20 @@ async def send_response(ctx: commands.Context, embed: discord.Embed, view: Optio
     return msg
 
 def err(msg: str) -> discord.Embed:
-    formatted = f">>> {msg}" if not msg.startswith(">>>") else msg
     avatar = bot.user.avatar.url if (bot and bot.user and bot.user.avatar) else None
+    formatted = f">>> {msg}" if not msg.startswith(">>>") else msg
     e = discord.Embed(title="❌ Error Encountered", description=formatted[:4096], color=0x2B2D31, timestamp=datetime.now(timezone.utc))
     e.set_footer(text="Shadow Cheats Music", icon_url=avatar)
     return e
 
 def ok(msg: str, desc: str = "") -> discord.Embed:
-    formatted_desc = f">>> {desc}" if desc and not desc.startswith(">>>") else desc
     avatar = bot.user.avatar.url if (bot and bot.user and bot.user.avatar) else None
-    e = discord.Embed(title=f"✅ {msg}", description=formatted_desc[:4096] if formatted_desc else None, color=0x2B2D31, timestamp=datetime.now(timezone.utc))
+    t = msg if any(msg.startswith(p) for p in ["✅", "🟢", "🎵", "🔊", "❌", "🔁", "🔀"]) else f"✅ {msg}"
+    if desc:
+        formatted_desc = f">>> {desc}" if not desc.startswith(">>>") else desc
+    else:
+        formatted_desc = None
+    e = discord.Embed(title=t, description=formatted_desc[:4096] if formatted_desc else None, color=0x2B2D31, timestamp=datetime.now(timezone.utc))
     e.set_footer(text="Shadow Cheats Music", icon_url=avatar)
     return e
 
@@ -1315,7 +1319,7 @@ def make_progress_bar(pos: int, total: int, width=13) -> str:
 
 def panel_embed(p: GuildPlayer) -> discord.Embed:
     avatar = bot.user.avatar.url if (bot and bot.user and bot.user.avatar) else None
-    e = discord.Embed(color=0x5865F2, timestamp=datetime.now(timezone.utc))
+    e = discord.Embed(color=0x2B2D31, timestamp=datetime.now(timezone.utc))
     e.set_author(name="SHADOW CHEATS MUSIC PLAYER", icon_url=avatar)
 
     loop_s = "Single" if p.loop == "track" else ("Queue" if p.loop == "queue" else "Off")
@@ -4881,13 +4885,12 @@ async def slash_previous(ctx: commands.Context):
 # ─────────────────────────────────────────────
 
 def get_home_help_embed(bot_name: str, prefix: str, avatar_url: Optional[str], invite_url: str) -> discord.Embed:
-    e = discord.Embed(title="SHADOW CHEATS MUSIC Guide", color=0x2B2D31, timestamp=datetime.now(timezone.utc))
+    e = discord.Embed(title="SHADOW CHEATS Guide", color=0x2B2D31)
     e.description = (
-        f"Hey, I am **SHADOW CHEATS MUSIC** - Your Server Music Companion\n\n"
+        f"Hey, I am **SHADOW CHEATS** - Your Server Music Companion\n\n"
         f"• **Prefix for this server:** `{prefix}`\n"
         f"• **Total Commands:** `114`\n"
         f"• **Use** `{prefix}help` to get started!\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "• **All Modules:**\n"
         "🎵 » **Music**\n"
         "📋 » **Queue**\n"
@@ -4896,13 +4899,12 @@ def get_home_help_embed(bot_name: str, prefix: str, avatar_url: Optional[str], i
         "🔊 » **Voice**\n"
         "⚙️ » **Settings**\n"
         "ℹ️ » **Information**\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "**[Links]**\n"
         f"[Invite Me]({invite_url}) | [Support Server](https://discord.gg/shadowcheats)"
     )
     if avatar_url:
         e.set_thumbnail(url=avatar_url)
-    e.set_footer(text="Shadow Cheats Music", icon_url=avatar_url)
+    e.set_footer(text="Powered By SHADOW CHEATS", icon_url=avatar_url)
     return e
 
 class HelpSelect(discord.ui.Select):
