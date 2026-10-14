@@ -1362,7 +1362,12 @@ class GuildPlayer:
         elapsed = time.time() - self.start_time
         if self.paused_at:
             elapsed = self.paused_at - self.start_time
-        return int(elapsed * self.speed + self.seek_offset)
+        pos = int(elapsed * self.speed + self.seek_offset)
+        if self.current:
+            dur = int(self.current.get("duration") or 0)
+            if dur > 0:
+                pos = min(dur, pos)
+        return max(0, pos)
 
     def is_playing(self): return bool(self.voice and self.voice.is_playing())
     def is_paused(self):  return bool(self.voice and self.voice.is_paused())
@@ -1383,22 +1388,37 @@ class GuildPlayer:
         self.panel_msg = None
 
     async def update_panel(self):
-        if self.panel_msg:
+        if self.panel_msg and self.current:
             try:
                 await self.panel_msg.edit(embed=panel_embed(self))
+            except discord.errors.NotFound:
+                self.panel_msg = None
+            except discord.errors.HTTPException as e:
+                if e.status == 429:
+                    retry_sec = getattr(e, "retry_after", 2.0)
+                    await asyncio.sleep(retry_sec)
             except Exception:
                 pass
 
     async def _progress_loop(self):
-        while self.is_playing() or self.is_paused():
-            await self.update_panel()
-            await asyncio.sleep(4)
-        await self.update_panel()
+        try:
+            while self.current and (self.is_playing() or self.is_paused()):
+                if not self.panel_msg:
+                    break
+                if self.is_playing():
+                    await self.update_panel()
+                await asyncio.sleep(2.0)
+            if self.panel_msg and self.current:
+                await self.update_panel()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
 
     def ensure_updater(self):
         if self.updater_task and not self.updater_task.done():
             self.updater_task.cancel()
-        if self.is_playing() or self.is_paused():
+        if self.current and (self.is_playing() or self.is_paused() or (self.voice and self.voice.is_connected())):
             self.updater_task = asyncio.create_task(self._progress_loop())
 
 # ─────────────────────────────────────────────
