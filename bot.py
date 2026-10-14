@@ -938,7 +938,7 @@ def _fmt(secs: int) -> str:
 
 def history_embed(track: dict) -> discord.Embed:
     title = track.get("title", "Unknown Track")
-    url = track.get("url", "")
+    url = track.get("video_url") or track.get("url", "")
     dur = _fmt(int(track.get("duration") or 0))
     uploader = track.get("uploader", "Unknown Artist")
     req_id = track.get("requester_id")
@@ -946,18 +946,18 @@ def history_embed(track: dict) -> discord.Embed:
     avatar = bot.user.avatar.url if (bot and bot.user and bot.user.avatar) else None
 
     req_str = f"<@{req_id}>" if req_id else "`AutoPlay`"
-    title_display = f"### [{title[:100]}]({url})" if url else f"### {title[:100]}"
 
     e = discord.Embed(
+        title=title[:256],
+        url=url if url else None,
         color=0x2B2D31,
-        description=(
-            f"{title_display}\n\n"
-            f">>> 👤 **Artist:** `{uploader[:35]}`\n"
-            f"⏱️ **Duration:** `{dur}`  •  🎧 **Requester:** {req_str}"
-        ),
         timestamp=datetime.now(timezone.utc)
     )
     e.set_author(name="Track Finished • SHADOW CHEATS MUSIC", icon_url=avatar)
+    e.description = (
+        f"> 👤 Artist: `{uploader[:35]}`\n"
+        f"> ⏱ Duration: `{dur}` • 🎧 Requester: {req_str}"
+    )
     if thumb:
         e.set_thumbnail(url=thumb)
     e.set_footer(text="Shadow Cheats Music", icon_url=avatar)
@@ -999,18 +999,34 @@ class YTSource(discord.PCMVolumeTransformer):
 
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
-            valid = []
+            q_lower = query.lower()
+            candidates = []
             for e in data["entries"]:
                 if not e: continue
-                dur = e.get("duration") or 0
+                dur = int(e.get("duration") or 0)
                 url = e.get("url") or e.get("webpage_url") or ""
                 title = (e.get("title") or "").lower()
-                if "/shorts/" in url or "#shorts" in title or "#short" in title:
+                if "/shorts/" in url or "#shorts" in title or "#short" in title or (0 < dur < 60):
                     continue
-                if 0 < dur < 60:
+                if "slowed" not in q_lower and ("slowed" in title or "reverb" in title):
                     continue
-                valid.append(e)
-            data = valid[0] if valid else data["entries"][0]
+                if "sped" not in q_lower and "speed" not in q_lower and ("sped up" in title or "speed up" in title):
+                    continue
+                if "edit" not in q_lower and ("[edit" in title or "(edit" in title or "edit audio" in title):
+                    continue
+                score = 0
+                if "official" in title:
+                    score += 10
+                if "official video" in title or "official music video" in title:
+                    score += 5
+                if "official audio" in title:
+                    score += 4
+                candidates.append((score, e))
+            if candidates:
+                candidates.sort(key=lambda x: x[0], reverse=True)
+                data = candidates[0][1]
+            else:
+                data = data["entries"][0]
         if data and not data.get("webpage_url") and data.get("url"):
             data["webpage_url"] = data["url"]
         return data or {}
@@ -1058,18 +1074,34 @@ class YTSource(discord.PCMVolumeTransformer):
         if is_search:
             entries = data.get("entries", [])
             if entries:
-                valid = []
+                q_lower = query.lower()
+                candidates = []
                 for e in entries:
                     if not e: continue
-                    dur = e.get("duration") or 0
+                    dur = int(e.get("duration") or 0)
                     url = e.get("url") or e.get("webpage_url") or ""
                     title = (e.get("title") or "").lower()
-                    if "/shorts/" in url or "#shorts" in title or "#short" in title:
+                    if "/shorts/" in url or "#shorts" in title or "#short" in title or (0 < dur < 60):
                         continue
-                    if 0 < dur < 60:
+                    if "slowed" not in q_lower and ("slowed" in title or "reverb" in title):
                         continue
-                    valid.append(e)
-                selected = valid[0] if valid else entries[0]
+                    if "sped" not in q_lower and "speed" not in q_lower and ("sped up" in title or "speed up" in title):
+                        continue
+                    if "edit" not in q_lower and ("[edit" in title or "(edit" in title or "edit audio" in title):
+                        continue
+                    score = 0
+                    if "official" in title:
+                        score += 10
+                    if "official video" in title or "official music video" in title:
+                        score += 5
+                    if "official audio" in title:
+                        score += 4
+                    candidates.append((score, e))
+                if candidates:
+                    candidates.sort(key=lambda x: x[0], reverse=True)
+                    selected = candidates[0][1]
+                else:
+                    selected = entries[0]
                 if selected and not selected.get("webpage_url") and selected.get("url"):
                     selected["webpage_url"] = selected["url"]
                 return [selected], False
@@ -1310,19 +1342,19 @@ class GuildPlayer:
 #           LIVE PANEL EMBED
 # ─────────────────────────────────────────────
 
-def make_progress_bar(pos: int, total: int, width=13) -> str:
+def make_progress_bar(pos: int, total: int, width=12) -> str:
     if total <= 0:
-        return "━" * width
+        return "─" * width
     percentage = max(0.0, min(1.0, pos / total))
     idx = int(percentage * (width - 1))
-    return "━" * idx + "🔘" + "─" * (width - 1 - idx)
+    return "─" * idx + "🔘" + "─" * (width - 1 - idx)
 
 def panel_embed(p: GuildPlayer) -> discord.Embed:
     avatar = bot.user.avatar.url if (bot and bot.user and bot.user.avatar) else None
     e = discord.Embed(color=0x2B2D31, timestamp=datetime.now(timezone.utc))
     e.set_author(name="SHADOW CHEATS MUSIC PLAYER", icon_url=avatar)
 
-    loop_s = "Single" if p.loop == "track" else ("Queue" if p.loop == "queue" else "Off")
+    loop_s = "Track" if p.loop == "track" else ("Queue" if p.loop == "queue" else "Off")
     speed_s = f"{p.speed}x" if p.speed != 1.0 else "Normal"
     vol_pct = int(p.volume * 100)
 
@@ -1338,10 +1370,12 @@ def panel_embed(p: GuildPlayer) -> discord.Embed:
         bar = make_progress_bar(pos, total, width=12)
 
         req_str = f"<@{req_id}>" if req_id else "`AutoPlay`"
-        title_link = f"**[{title[:120]}]({url})**" if url else f"**{title[:120]}**"
+
+        e.title = title[:256]
+        if url:
+            e.url = url
 
         e.description = (
-            f"{title_link}\n\n"
             f"`{p.fmt(pos)}` {bar} `{dur}`\n\n"
             f"👤 **Artist:** `{author[:35]}`\n"
             f"🎧 **Requester:** {req_str}\n"
@@ -2695,9 +2729,9 @@ async def play_next(guild: discord.Guild, interaction: Optional[discord.Interact
                 logging.error(f"Playback error: {error}")
             asyncio.run_coroutine_threadsafe(play_next(guild), bot.loop)
 
+        p.reset_start_time()
         p.voice.play(src, after=after_cb)
         Database.increment_stat("songs_played")
-        p.ensure_updater()
 
     except Exception as ex:
         logging.error(f"Streaming error: {ex}")
@@ -2722,6 +2756,7 @@ async def play_next(guild: discord.Guild, interaction: Optional[discord.Interact
         try:
             await queued_msg.edit(embed=panel_embed(p), view=MusicPanel(guild.id))
             p.panel_msg = queued_msg
+            p.ensure_updater()
             return
         except Exception:
             pass
@@ -2730,6 +2765,7 @@ async def play_next(guild: discord.Guild, interaction: Optional[discord.Interact
         try:
             await interaction.edit_original_response(embed=panel_embed(p), view=MusicPanel(guild.id))
             p.panel_msg = await interaction.original_response()
+            p.ensure_updater()
             return
         except Exception:
             pass
@@ -2738,6 +2774,7 @@ async def play_next(guild: discord.Guild, interaction: Optional[discord.Interact
         try:
             msg = await p.text_ch.send(embed=panel_embed(p), view=MusicPanel(guild.id))
             p.panel_msg = msg
+            p.ensure_updater()
         except Exception:
             pass
 
@@ -3557,17 +3594,22 @@ async def slash_about(ctx: commands.Context):
     vote_url = "https://top.gg/bot/shadowcheats"
 
     embed = discord.Embed(
-        title="🎵 About SHADOW CHEATS MUSIC Bot", 
-        description="SHADOW CHEATS MUSIC is a state-of-the-art Discord music bot streaming high-fidelity audio 24/7. All features are **permanently unlocked** and free for all servers.",
-        color=0x7d5fff
+        title="SHADOW CHEATS MUSIC", 
+        color=0x2B2D31,
+        timestamp=datetime.now(timezone.utc)
     )
-    
-    embed.add_field(name="💎 Premium Status", value="`Lifetime Free Premium Unlocked`", inline=False)
-    embed.add_field(name="🎛️ Premium Features Included", value="• Dynamic Visual Panel controls\n• Custom and Global Playlists\n• Advanced Equalizer & FFMPEG presets\n• 24/7 Voice Channel standby mode\n• Voteskip and Autoplay systems\n• Realtime Speed & Pitch modulations", inline=False)
-    embed.add_field(name="🔗 Useful Links", value=f"[**Invite Bot**]({invite_url}) · [**Support Server**]({support_url}) · [**Vote Bot**]({vote_url})", inline=False)
-    
+    embed.description = (
+        f"> **SHADOW CHEATS MUSIC** is a high-fidelity Discord music bot streaming 24/7 with zero lag.\n\n"
+        f"• **Commands:** `114`\n"
+        f"• **Latency:** `{round(bot.latency * 1000, 2)}ms`\n"
+        f"• **Servers:** `{len(bot.guilds)}`\n"
+        f"• **24/7 Mode:** `Active`\n\n"
+        f"───────────────────────────\n"
+        f"**[Links]**\n"
+        f"[Invite Me]({invite_url}) | [Support Server]({support_url})"
+    )
     embed.set_thumbnail(url=bot.user.avatar.url if bot.user.avatar else "")
-    embed.set_footer(text="Developed with 💜 by SHADOW CHEATS Team")
+    embed.set_footer(text="Shadow Cheats Music", icon_url=bot.user.avatar.url if bot.user.avatar else "")
     await ctx.send(embed=embed)
 
 # Purge / Clean Bot Messages Command
@@ -4885,12 +4927,13 @@ async def slash_previous(ctx: commands.Context):
 # ─────────────────────────────────────────────
 
 def get_home_help_embed(bot_name: str, prefix: str, avatar_url: Optional[str], invite_url: str) -> discord.Embed:
-    e = discord.Embed(title="SHADOW CHEATS Guide", color=0x2B2D31)
+    e = discord.Embed(title="SHADOW CHEATS MUSIC Guide", color=0x2B2D31, timestamp=datetime.now(timezone.utc))
     e.description = (
-        f"Hey, I am **SHADOW CHEATS** - Your Server Music Companion\n\n"
+        f"Hey, I am **SHADOW CHEATS MUSIC** - Your Server Music Companion\n\n"
         f"• **Prefix for this server:** `{prefix}`\n"
         f"• **Total Commands:** `114`\n"
         f"• **Use** `{prefix}help` to get started!\n\n"
+        "───────────────────────────\n"
         "• **All Modules:**\n"
         "🎵 » **Music**\n"
         "📋 » **Queue**\n"
@@ -4899,12 +4942,13 @@ def get_home_help_embed(bot_name: str, prefix: str, avatar_url: Optional[str], i
         "🔊 » **Voice**\n"
         "⚙️ » **Settings**\n"
         "ℹ️ » **Information**\n\n"
+        "───────────────────────────\n"
         "**[Links]**\n"
         f"[Invite Me]({invite_url}) | [Support Server](https://discord.gg/shadowcheats)"
     )
     if avatar_url:
         e.set_thumbnail(url=avatar_url)
-    e.set_footer(text="Powered By SHADOW CHEATS", icon_url=avatar_url)
+    e.set_footer(text="Shadow Cheats Music", icon_url=avatar_url)
     return e
 
 class HelpSelect(discord.ui.Select):
