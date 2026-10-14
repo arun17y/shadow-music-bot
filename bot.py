@@ -899,13 +899,10 @@ YTDL_OPTIONS = {
     "no_warnings": False,
     "default_search": "ytsearch",
     "cookiefile": COOKIE_ARG,
-    "impersonate": CHROME_TARGET,
+    "js_runtimes": {"node": {}},
     "extractor_args": {
         "youtube": {
-            "player_client": ["web", "mweb", "android", "ios"]
-        },
-        "youtubepot-bgutilhttp": {
-            "base_url": ["http://127.0.0.1:4416"]
+            "player_client": ["visionos", "web", "mweb", "android"]
         }
     },
 }
@@ -1093,10 +1090,7 @@ class YTSource(discord.PCMVolumeTransformer):
         opts["cookiefile"] = COOKIE_ARG
         opts["extractor_args"] = {
             "youtube": {
-                "player_client": ["web", "mweb", "visionos", "android"]
-            },
-            "youtubepot-bgutilhttp": {
-                "base_url": ["http://127.0.0.1:4416"]
+                "player_client": ["visionos", "web", "mweb", "android"]
             }
         }
         
@@ -1193,10 +1187,7 @@ class YTSource(discord.PCMVolumeTransformer):
                 opts_chrome["impersonate"] = CHROME_TARGET
             opts_chrome["extractor_args"] = {
                 "youtube": {
-                    "player_client": ["web", "mweb", "android", "ios"]
-                },
-                "youtubepot-bgutilhttp": {
-                    "base_url": ["http://127.0.0.1:4416"]
+                    "player_client": ["visionos", "web", "mweb", "android"]
                 }
             }
             try:
@@ -1204,7 +1195,7 @@ class YTSource(discord.PCMVolumeTransformer):
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
                     return res
             except Exception as e:
-                print(f"⚠️ Chrome impersonation extract attempt: {e}")
+                print(f"⚠️ Primary extract attempt: {e}")
 
             # 2. TV & Android VR
             opts_tv = opts.copy()
@@ -1212,9 +1203,6 @@ class YTSource(discord.PCMVolumeTransformer):
             opts_tv["extractor_args"] = {
                 "youtube": {
                     "player_client": ["tv", "android_vr"]
-                },
-                "youtubepot-bgutilhttp": {
-                    "base_url": ["http://127.0.0.1:4416"]
                 }
             }
             try:
@@ -1224,15 +1212,12 @@ class YTSource(discord.PCMVolumeTransformer):
             except Exception as e:
                 print(f"⚠️ TV client extract attempt: {e}")
 
-            # 3. VisionOS
+            # 3. VisionOS fallback
             opts_vision = opts.copy()
             opts_vision["cookiefile"] = COOKIE_ARG
             opts_vision["extractor_args"] = {
                 "youtube": {
                     "player_client": ["visionos"]
-                },
-                "youtubepot-bgutilhttp": {
-                    "base_url": ["http://127.0.0.1:4416"]
                 }
             }
             try:
@@ -1712,16 +1697,18 @@ class MusicPanel(discord.ui.View):
     @discord.ui.button(label="Loop", emoji="🔁", style=discord.ButtonStyle.primary, row=2)
     async def loop_btn(self, i: discord.Interaction, b: discord.ui.Button):
         p = self._p()
+        toast_msg = ""
         if p.loop == "off":
             p.loop = "track"
-            await self._toast(i, ok("Track Loop Enabled ✅"))
+            toast_msg = "Track Loop Enabled ✅"
         elif p.loop == "track":
             p.loop = "queue"
-            await self._toast(i, ok("Queue Loop Enabled ✅"))
+            toast_msg = "Queue Loop Enabled ✅"
         else:
             p.loop = "off"
-            await self._toast(i, ok("Loop Disabled ❌"))
-        await i.response.edit_message(embed=panel_embed(p), view=self)
+            toast_msg = "Loop Disabled ❌"
+        await self._update(i)
+        await self._toast(i, ok(toast_msg))
 
     @discord.ui.button(label="Stop", emoji="⏹", style=discord.ButtonStyle.primary, row=2)
     async def stop_btn(self, i: discord.Interaction, b: discord.ui.Button):
@@ -2099,6 +2086,8 @@ class MusicBot(commands.Bot):
             async def diagnose_view(request):
                 vc_list = []
                 for vc in self.voice_clients:
+                    conn = getattr(vc, "_connection", None)
+                    sess = getattr(conn, "dave_session", None) if conn else None
                     vc_list.append({
                         "guild_id": vc.guild.id,
                         "guild_name": vc.guild.name,
@@ -2107,6 +2096,11 @@ class MusicBot(commands.Bot):
                         "is_connected": vc.is_connected(),
                         "is_playing": vc.is_playing(),
                         "is_paused": vc.is_paused(),
+                        "endpoint": str(getattr(conn, "endpoint", None)),
+                        "dave_proto": getattr(conn, "dave_protocol_version", 0) if conn else 0,
+                        "can_encrypt": getattr(conn, "can_encrypt", False) if conn else False,
+                        "dave_ready": getattr(sess, "ready", False) if sess else False,
+                        "dave_status": str(getattr(sess, "status", None)) if sess else None,
                         "latency": getattr(vc, "latency", 0),
                         "average_latency": getattr(vc, "average_latency", 0)
                     })
@@ -2714,6 +2708,18 @@ async def on_voice_state_update(member, before, after):
             if stay_247:
                 Database.set_247(member.guild.id, 1, after.channel.id, tx_id)
                 p.stay_247 = True
+    else:
+        # A human member joined or moved into the channel where the bot is connected
+        if not member.bot and after.channel:
+            p = bot.get_player(member.guild.id)
+            if p.voice and p.voice.channel and after.channel.id == p.voice.channel.id:
+                conn = getattr(p.voice, "_connection", None)
+                if conn and conn.dave_protocol_version > 0 and not conn.can_encrypt:
+                    try:
+                        await conn.reinit_dave_session()
+                        print(f"📡 [DAVE Sync] User {member.name} joined; re-announced MLS key package in '{after.channel.name}'")
+                    except Exception:
+                        pass
 
 # Guild Join Event
 @bot.event
@@ -2983,6 +2989,35 @@ async def play_next(guild: discord.Guild, interaction: Optional[discord.Interact
             else:
                 print(f"✅ [Voice Playback Finished] Guild {guild.id} after {elapsed:.1f}s: {track.get('title')}")
             bot.loop.call_soon_threadsafe(lambda: bot.loop.create_task(play_next(guild)))
+
+        # Ensure DAVE E2EE protocol is active and ready before audio starts
+        conn = getattr(p.voice, "_connection", None)
+        if conn and conn.dave_protocol_version > 0 and not conn.can_encrypt:
+            print(f"⚠️ [DAVE Sync] Session not encrypted (can_encrypt=False) in guild {guild.id}. Re-initializing DAVE MLS...")
+            try:
+                await conn.reinit_dave_session()
+                for _ in range(15):
+                    if conn.can_encrypt:
+                        break
+                    await asyncio.sleep(0.1)
+            except Exception as d_err:
+                print(f"⚠️ [DAVE Sync] reinit error: {d_err}")
+
+            if not conn.can_encrypt and p.voice.channel:
+                ch = p.voice.channel
+                print(f"🔄 [DAVE Sync] Active listeners present; reconnecting to '{ch.name}' to seal MLS group...")
+                try:
+                    await p.voice.disconnect(force=True)
+                    await asyncio.sleep(0.3)
+                    p.voice = await ch.connect(timeout=15, reconnect=True, self_deaf=True)
+                    for _ in range(20):
+                        new_conn = getattr(p.voice, "_connection", None)
+                        if new_conn and new_conn.can_encrypt:
+                            print(f"✅ [DAVE Sync] Active encryption verified (status={new_conn.dave_session.status if new_conn.dave_session else 'ready'})")
+                            break
+                        await asyncio.sleep(0.1)
+                except Exception as rec_err:
+                    print(f"⚠️ [DAVE Sync] Reconnection error: {rec_err}")
 
         p.reset_start_time()
         if p.voice and (p.voice.is_playing() or p.voice.is_paused()):
