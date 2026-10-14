@@ -65,17 +65,21 @@ except Exception:
     pass
 
 # In-memory circular log buffer for live debugging via /api/logs
-RECENT_LOGS = deque(maxlen=300)
+RECENT_LOGS = deque(maxlen=1000)
 class LogTeeHandler(logging.Handler):
     def emit(self, record):
         try:
-            RECENT_LOGS.append(self.format(record))
+            msg = self.format(record)
+            if "/health" in msg or "GET /health" in msg:
+                return
+            RECENT_LOGS.append(msg)
         except Exception:
             pass
 
 _tee_handler = LogTeeHandler()
 _tee_handler.setFormatter(logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s', '%H:%M:%S'))
 logging.getLogger().addHandler(_tee_handler)
+logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 
 class OutputTee:
     def __init__(self, target):
@@ -85,6 +89,8 @@ class OutputTee:
             try: self.target.write(s)
             except Exception: pass
         if isinstance(s, str) and s.strip():
+            if "/health" in s or "GET /health" in s:
+                return
             ts = time.strftime("[%Y-%m-%d %H:%M:%S]")
             RECENT_LOGS.append(f"{ts} {s.rstrip()}")
     def flush(self):
@@ -99,13 +105,13 @@ sys.stderr = OutputTee(sys.stderr)
 #             DEPENDENCY AUTO-INSTALLER
 # ─────────────────────────────────────────────
 
-REQUIRED = ["discord.py>=2.3.0", "yt-dlp", "PyNaCl", "aiohttp", "psutil", "davey"]
+REQUIRED = ["discord.py>=2.3.0", "yt-dlp", "PyNaCl", "aiohttp", "psutil", "davey", "bgutil-ytdlp-pot-provider"]
 
 def auto_install():
     missing = []
     for pkg in REQUIRED:
         name = pkg.split(">=")[0]
-        import_name = {"discord.py": "discord", "PyNaCl": "nacl"}.get(name, name.replace("-", "_"))
+        import_name = {"discord.py": "discord", "PyNaCl": "nacl", "bgutil-ytdlp-pot-provider": "yt_dlp_plugins"}.get(name, name.replace("-", "_"))
         try:
             importlib.import_module(import_name)
         except ImportError:
@@ -778,7 +784,7 @@ class SpotifyResolver:
 
 def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pitch: float = 1.0) -> dict:
     before_opts = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
-    opts = "-vn -ar 48000 -ac 2"
+    opts = "-vn"
     
     audio_filters = []
     
@@ -871,6 +877,9 @@ YTDL_OPTIONS = {
     "extractor_args": {
         "youtube": {
             "player_client": ["web", "mweb", "android", "ios"]
+        },
+        "youtubepot-bgutilhttp": {
+            "base_url": ["http://127.0.0.1:4416"]
         }
     },
 }
@@ -993,6 +1002,9 @@ class YTSource(discord.PCMVolumeTransformer):
         opts["extractor_args"] = {
             "youtube": {
                 "player_client": ["web", "mweb", "visionos", "android"]
+            },
+            "youtubepot-bgutilhttp": {
+                "base_url": ["http://127.0.0.1:4416"]
             }
         }
         is_search = not query.startswith("http")
@@ -1003,7 +1015,10 @@ class YTSource(discord.PCMVolumeTransformer):
                 return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
             except Exception:
                 opts_tv = opts.copy()
-                opts_tv["extractor_args"] = {"youtube": {"player_client": ["tv", "android_vr"]}}
+                opts_tv["extractor_args"] = {
+                    "youtube": {"player_client": ["tv", "android_vr"]},
+                    "youtubepot-bgutilhttp": {"base_url": ["http://127.0.0.1:4416"]}
+                }
                 return yt_dlp.YoutubeDL(opts_tv).extract_info(q, download=False)
 
         data = await loop.run_in_executor(None, run)
@@ -1031,6 +1046,14 @@ class YTSource(discord.PCMVolumeTransformer):
                 selected = e
                 break
             if not selected:
+                for e in data["entries"]:
+                    if not e: continue
+                    dur = int(e.get("duration") or 0)
+                    url = e.get("url") or e.get("webpage_url") or ""
+                    if "/shorts/" not in url and dur >= 60:
+                        selected = e
+                        break
+            if not selected:
                 selected = data["entries"][0]
             data = selected
         if data and not data.get("webpage_url") and data.get("url"):
@@ -1045,6 +1068,9 @@ class YTSource(discord.PCMVolumeTransformer):
         opts["extractor_args"] = {
             "youtube": {
                 "player_client": ["web", "mweb", "visionos", "android"]
+            },
+            "youtubepot-bgutilhttp": {
+                "base_url": ["http://127.0.0.1:4416"]
             }
         }
         
@@ -1066,7 +1092,10 @@ class YTSource(discord.PCMVolumeTransformer):
                 return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
             except Exception:
                 opts_tv = opts.copy()
-                opts_tv["extractor_args"] = {"youtube": {"player_client": ["tv", "android_vr"]}}
+                opts_tv["extractor_args"] = {
+                    "youtube": {"player_client": ["tv", "android_vr"]},
+                    "youtubepot-bgutilhttp": {"base_url": ["http://127.0.0.1:4416"]}
+                }
                 return yt_dlp.YoutubeDL(opts_tv).extract_info(q, download=False)
 
         data = await loop.run_in_executor(None, run)
@@ -1099,6 +1128,14 @@ class YTSource(discord.PCMVolumeTransformer):
                     selected = e
                     break
                 if not selected:
+                    for e in entries:
+                        if not e: continue
+                        dur = int(e.get("duration") or 0)
+                        url = e.get("url") or e.get("webpage_url") or ""
+                        if "/shorts/" not in url and dur >= 60:
+                            selected = e
+                            break
+                if not selected:
                     selected = entries[0]
                 if selected and not selected.get("webpage_url") and selected.get("url"):
                     selected["webpage_url"] = selected["url"]
@@ -1123,7 +1160,7 @@ class YTSource(discord.PCMVolumeTransformer):
         opts["extract_flat"] = False
 
         def run():
-            # 1. Primary: Direct Chrome TLS Impersonation (native bypass for datacenter 429)
+            # 1. Primary: Direct Chrome TLS Impersonation + PO Token Daemon
             opts_chrome = opts.copy()
             opts_chrome["cookiefile"] = COOKIE_ARG
             if CHROME_TARGET:
@@ -1131,6 +1168,9 @@ class YTSource(discord.PCMVolumeTransformer):
             opts_chrome["extractor_args"] = {
                 "youtube": {
                     "player_client": ["web", "mweb", "android", "ios"]
+                },
+                "youtubepot-bgutilhttp": {
+                    "base_url": ["http://127.0.0.1:4416"]
                 }
             }
             try:
@@ -1146,6 +1186,9 @@ class YTSource(discord.PCMVolumeTransformer):
             opts_tv["extractor_args"] = {
                 "youtube": {
                     "player_client": ["tv", "android_vr"]
+                },
+                "youtubepot-bgutilhttp": {
+                    "base_url": ["http://127.0.0.1:4416"]
                 }
             }
             try:
@@ -1161,6 +1204,9 @@ class YTSource(discord.PCMVolumeTransformer):
             opts_vision["extractor_args"] = {
                 "youtube": {
                     "player_client": ["visionos"]
+                },
+                "youtubepot-bgutilhttp": {
+                    "base_url": ["http://127.0.0.1:4416"]
                 }
             }
             try:
@@ -1176,6 +1222,9 @@ class YTSource(discord.PCMVolumeTransformer):
             opts_mobile["extractor_args"] = {
                 "youtube": {
                     "player_client": ["android", "ios"]
+                },
+                "youtubepot-bgutilhttp": {
+                    "base_url": ["http://127.0.0.1:4416"]
                 }
             }
             try:
@@ -2001,6 +2050,104 @@ class MusicBot(commands.Bot):
                         "traceback": traceback.format_exc()
                     }, status=500)
 
+            async def diagnose_view(request):
+                vc_list = []
+                for vc in self.voice_clients:
+                    vc_list.append({
+                        "guild_id": vc.guild.id,
+                        "guild_name": vc.guild.name,
+                        "channel_id": vc.channel.id if vc.channel else None,
+                        "channel_name": vc.channel.name if vc.channel else None,
+                        "is_connected": vc.is_connected(),
+                        "is_playing": vc.is_playing(),
+                        "is_paused": vc.is_paused(),
+                        "latency": getattr(vc, "latency", 0),
+                        "average_latency": getattr(vc, "average_latency", 0)
+                    })
+
+                player_list = []
+                for gid, p in self.players.items():
+                    if p.voice and p.voice.is_connected():
+                        player_list.append({
+                            "guild_id": gid,
+                            "has_voice": bool(p.voice),
+                            "voice_connected": bool(p.voice and p.voice.is_connected()),
+                            "is_playing": p.is_playing(),
+                            "is_paused": p.is_paused(),
+                            "current_track": p.current.get("title") if p.current else None,
+                            "current_url": p.current.get("url") if p.current else None,
+                            "position_sec": p.position,
+                            "queue_count": len(p.queue),
+                            "volume": int(p.volume * 100),
+                            "speed": p.speed,
+                            "filter": p.filter
+                        })
+
+                pot_ok = False
+                try:
+                    async with aiohttp.ClientSession() as sess:
+                        async with sess.get("http://127.0.0.1:4416/ping", timeout=1.0) as resp:
+                            pot_ok = (resp.status == 200)
+                except Exception:
+                    pot_ok = False
+
+                return web.json_response({
+                    "status": "ok",
+                    "guilds_count": len(self.guilds),
+                    "voice_clients_count": len(self.voice_clients),
+                    "voice_clients": vc_list,
+                    "active_players": player_list,
+                    "opus_loaded": discord.opus.is_loaded(),
+                    "pot_provider_active": pot_ok,
+                    "dave_available": getattr(discord.voice_client, "has_dave", False)
+                })
+
+            async def test_play_view(request):
+                query = request.query.get("query", "Alan Walker Faded")
+                gid_param = request.query.get("guild_id")
+                target_player = None
+                if gid_param and gid_param.isdigit():
+                    target_player = self.players.get(int(gid_param))
+                else:
+                    for p in self.players.values():
+                        if p.voice and p.voice.is_connected():
+                            target_player = p
+                            break
+
+                if not target_player or not target_player.voice or not target_player.voice.is_connected():
+                    return web.json_response({
+                        "status": "error",
+                        "error": "No voice connection found to test playback into. Join a voice channel first!"
+                    }, status=400)
+
+                g = self.get_guild(target_player.guild_id)
+                tracks, _ = await YTSource.extract_tracks(query, asyncio.get_event_loop())
+                if not tracks:
+                    return web.json_response({"status": "error", "error": "No tracks found for query"}, status=404)
+
+                track_data = tracks[0]
+                track = {
+                    "title": track_data.get("title", "Unknown"),
+                    "url": track_data.get("webpage_url") or track_data.get("url", ""),
+                    "duration": int(track_data.get("duration") or 0),
+                    "thumbnail": track_data.get("thumbnail", ""),
+                    "uploader": track_data.get("uploader", "Unknown"),
+                    "requester_id": self.user.id if self.user else 0,
+                    "queued_msg": None
+                }
+                target_player.queue.append(track)
+                if not target_player.is_playing() and not target_player.is_paused():
+                    asyncio.create_task(play_next(g))
+
+                return web.json_response({
+                    "status": "ok",
+                    "message": "Playback initiated",
+                    "guild_id": target_player.guild_id,
+                    "track": track["title"],
+                    "url": track["url"],
+                    "duration": track["duration"]
+                })
+
             async def root_view(request):
                 try:
                     uptime_sec = int(time.time() - START_TIME)
@@ -2350,6 +2497,8 @@ class MusicBot(commands.Bot):
             app.router.add_get("/api/test_extract", test_extract_view)
             app.router.add_get("/api/test_stream", test_stream_view)
             app.router.add_get("/api/test_pcm", test_pcm_view)
+            app.router.add_get("/api/diagnose", diagnose_view)
+            app.router.add_get("/api/test_play", test_play_view)
             app.router.add_get("/api/sync_commands", sync_commands_api)
             app.router.add_post("/api/sync_commands", sync_commands_api)
 
@@ -2768,11 +2917,13 @@ async def play_next(guild: discord.Guild, interaction: Optional[discord.Interact
 
         p.history.appendleft(track)
 
+        play_started_at = time.time()
         def after_cb(error):
+            elapsed = time.time() - play_started_at
             if error:
-                print(f"❌ [Voice Playback Error] Guild {guild.id}: {error}")
+                print(f"❌ [Voice Playback Error] Guild {guild.id} after {elapsed:.1f}s: {error}")
             else:
-                print(f"✅ [Voice Playback Finished] Guild {guild.id} finished track: {track.get('title')}")
+                print(f"✅ [Voice Playback Finished] Guild {guild.id} after {elapsed:.1f}s: {track.get('title')}")
             asyncio.run_coroutine_threadsafe(play_next(guild), bot.loop)
 
         p.reset_start_time()
