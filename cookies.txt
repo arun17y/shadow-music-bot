@@ -1,5 +1,5 @@
 # Netscape HTTP Cookie File
-# This file is generated / cleaned for yt-dlp.
+# Cleaned by Shadow Cheats Music
 .msn.com	TRUE	/edge	FALSE	1799490793	pglt-edgeChromium-ntp	299
 .ntp.msn.com	TRUE	/edge	FALSE	1788949994	__rubyState	1_7
 .ntp.msn.com	TRUE	/edge	FALSE	1788949994	__rubyUX	true
