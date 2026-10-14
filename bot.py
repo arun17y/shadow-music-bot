@@ -172,6 +172,7 @@ if os.path.exists(COOKIES_FILE):
         with open(COOKIES_FILE, "r", encoding="utf-8", errors="ignore") as _cf:
             _raw_lines = _cf.readlines()
         _clean_lines = ["# Netscape HTTP Cookie File\n# Cleaned by Shadow Cheats Music\n"]
+        has_yt_login = False
         for _l in _raw_lines:
             _ls = _l.strip()
             if not _ls or _ls.startswith("#"):
@@ -181,15 +182,29 @@ if os.path.exists(COOKIES_FILE):
                 if _parts[0].startswith("."):
                     _parts[1] = "TRUE"
                 _clean_lines.append("\t".join(_parts) + "\n")
+                if any(k in _parts[5] for k in ["LOGIN_INFO", "__Secure-3PSID", "__Secure-1PSID", "SID"]):
+                    has_yt_login = True
         with open(COOKIES_FILE, "w", encoding="utf-8") as _cf:
             _cf.writelines(_clean_lines)
-        COOKIE_ARG = COOKIES_FILE
-        print(f"✅ Loaded and validated YouTube cookies from {COOKIES_FILE}")
+        if has_yt_login:
+            COOKIE_ARG = COOKIES_FILE
+            print(f"✅ Loaded verified YouTube account cookies from {COOKIES_FILE}")
+        else:
+            COOKIE_ARG = None
+            print(f"ℹ️ {COOKIES_FILE} does not contain authenticated YouTube session cookies. Using Chrome TLS impersonation.")
     except Exception as _ce:
         print(f"⚠️ Error sanitizing {COOKIES_FILE}: {_ce}")
-        COOKIE_ARG = COOKIES_FILE
+        COOKIE_ARG = None
 else:
-    print(f"⚠️ WARNING: {COOKIES_FILE} not found. YouTube streaming will use direct client bypasses.")
+    print(f"ℹ️ {COOKIES_FILE} not found. YouTube streaming will use Chrome TLS impersonation.")
+
+try:
+    from yt_dlp.networking.impersonate import ImpersonateTarget
+    CHROME_TARGET = ImpersonateTarget("chrome")
+    print("🚀 Chrome TLS impersonation target active for direct YouTube extraction.")
+except Exception as _ite:
+    CHROME_TARGET = None
+    print(f"⚠️ ImpersonateTarget not available: {_ite}")
 
 # ─────────────────────────────────────────────
 #              DATABASE SYSTEM
@@ -852,12 +867,10 @@ YTDL_OPTIONS = {
     "no_warnings": False,
     "default_search": "ytsearch",
     "cookiefile": COOKIE_ARG,
+    "impersonate": CHROME_TARGET,
     "extractor_args": {
-        "youtubepot-bgutilhttp": {
-            "base_url": ["http://127.0.0.1:4416"]
-        },
         "youtube": {
-            "player_client": ["web", "mweb", "visionos", "android", "ios", "tv"]
+            "player_client": ["web", "mweb", "android", "ios"]
         }
     },
 }
@@ -1110,25 +1123,24 @@ class YTSource(discord.PCMVolumeTransformer):
         opts["extract_flat"] = False
 
         def run():
-            # 1. Primary: Direct VisionOS / Web / MWeb with COOKIE_ARG
-            opts_primary = opts.copy()
-            opts_primary["cookiefile"] = COOKIE_ARG
-            opts_primary["extractor_args"] = {
-                "youtubepot-bgutilhttp": {
-                    "base_url": ["http://127.0.0.1:4416"]
-                },
+            # 1. Primary: Direct Chrome TLS Impersonation (native bypass for datacenter 429)
+            opts_chrome = opts.copy()
+            opts_chrome["cookiefile"] = COOKIE_ARG
+            if CHROME_TARGET:
+                opts_chrome["impersonate"] = CHROME_TARGET
+            opts_chrome["extractor_args"] = {
                 "youtube": {
-                    "player_client": ["visionos", "web", "mweb", "android"]
+                    "player_client": ["web", "mweb", "android", "ios"]
                 }
             }
             try:
-                res = yt_dlp.YoutubeDL(opts_primary).extract_info(url, download=False)
+                res = yt_dlp.YoutubeDL(opts_chrome).extract_info(url, download=False)
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
                     return res
             except Exception as e:
-                print(f"⚠️ Primary client extract attempt: {e}")
+                print(f"⚠️ Chrome impersonation extract attempt: {e}")
 
-            # 2. TV & Android VR with cookies
+            # 2. TV & Android VR
             opts_tv = opts.copy()
             opts_tv["cookiefile"] = COOKIE_ARG
             opts_tv["extractor_args"] = {
@@ -1143,7 +1155,22 @@ class YTSource(discord.PCMVolumeTransformer):
             except Exception as e:
                 print(f"⚠️ TV client extract attempt: {e}")
 
-            # 3. Mobile Android / iOS without cookies (fallback)
+            # 3. VisionOS
+            opts_vision = opts.copy()
+            opts_vision["cookiefile"] = COOKIE_ARG
+            opts_vision["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["visionos"]
+                }
+            }
+            try:
+                res = yt_dlp.YoutubeDL(opts_vision).extract_info(url, download=False)
+                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                    return res
+            except Exception as e:
+                print(f"⚠️ VisionOS client extract attempt: {e}")
+
+            # 4. Mobile Android / iOS without cookies (fallback)
             opts_mobile = opts.copy()
             opts_mobile["cookiefile"] = None
             opts_mobile["extractor_args"] = {
@@ -1943,6 +1970,37 @@ class MusicBot(commands.Bot):
                         "traceback": traceback.format_exc()
                     }, status=500)
 
+            async def test_pcm_view(request):
+                url = request.query.get("url", "https://www.youtube.com/watch?v=Mxv7O6BkJeE")
+                try:
+                    src = await YTSource.stream(url, asyncio.get_event_loop())
+                    chunks_read = 0
+                    total_bytes = 0
+                    for _ in range(30):
+                        chunk = src.read()
+                        if not chunk:
+                            break
+                        chunks_read += 1
+                        total_bytes += len(chunk)
+                    src.cleanup()
+                    return web.json_response({
+                        "status": "ok",
+                        "url": url,
+                        "title": src.data.get("title") if src.data else "Unknown",
+                        "stream_domain": src.data.get("url").split("/")[2] if src.data and src.data.get("url") else None,
+                        "chunks_read": chunks_read,
+                        "total_bytes": total_bytes,
+                        "audio_flows": total_bytes > 0
+                    })
+                except Exception as ex:
+                    import traceback
+                    return web.json_response({
+                        "status": "error",
+                        "url": url,
+                        "error": str(ex),
+                        "traceback": traceback.format_exc()
+                    }, status=500)
+
             async def root_view(request):
                 try:
                     uptime_sec = int(time.time() - START_TIME)
@@ -2291,6 +2349,7 @@ class MusicBot(commands.Bot):
             app.router.add_get("/api/logs", logs_view)
             app.router.add_get("/api/test_extract", test_extract_view)
             app.router.add_get("/api/test_stream", test_stream_view)
+            app.router.add_get("/api/test_pcm", test_pcm_view)
             app.router.add_get("/api/sync_commands", sync_commands_api)
             app.router.add_post("/api/sync_commands", sync_commands_api)
 
@@ -2711,10 +2770,16 @@ async def play_next(guild: discord.Guild, interaction: Optional[discord.Interact
 
         def after_cb(error):
             if error:
-                logging.error(f"Playback error: {error}")
+                print(f"❌ [Voice Playback Error] Guild {guild.id}: {error}")
+            else:
+                print(f"✅ [Voice Playback Finished] Guild {guild.id} finished track: {track.get('title')}")
             asyncio.run_coroutine_threadsafe(play_next(guild), bot.loop)
 
         p.reset_start_time()
+        if p.voice and (p.voice.is_playing() or p.voice.is_paused()):
+            try: p.voice.stop()
+            except Exception: pass
+        print(f"🔊 Starting voice playback for '{track.get('title')}' in guild {guild.id}")
         p.voice.play(src, after=after_cb)
         Database.increment_stat("songs_played")
 
