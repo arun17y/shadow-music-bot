@@ -1769,6 +1769,9 @@ class MusicBot(commands.Bot):
                 pass
 
     async def start_health_server(self):
+        if getattr(self, '_health_server_running', False):
+            return
+        self._health_server_running = True
         try:
             from aiohttp import web
             app = web.Application()
@@ -5072,7 +5075,23 @@ async def slash_pop(ctx: commands.Context):
 #                   RUN BOT
 # ─────────────────────────────────────────────
 
+def launch_background_health_server(bot_instance):
+    import threading
+    def _run():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(bot_instance.start_health_server())
+            loop.run_forever()
+        except Exception as e:
+            print(f"⚠️ Health server loop ended: {e}")
+    t = threading.Thread(target=_run, daemon=True, name="HealthServerThread")
+    t.start()
+    print("🚀 Standalone Health Server thread launched on boot!")
+
 if __name__ == "__main__":
+    launch_background_health_server(bot)
+    time.sleep(0.5)
     print("\n🚀 Starting SHADOW CHEATS MUSIC (yt-dlp + free premium)...")
     if not BOT_TOKEN or "YOUR_DISCORD_BOT_TOKEN" in BOT_TOKEN or BOT_TOKEN.strip() == "":
         print("\n" + "═"*60)
