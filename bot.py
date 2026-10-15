@@ -211,6 +211,19 @@ if not BOT_TOKEN:
     except Exception:
         pass
 
+if os.path.exists(CONFIG_FILE) and BOT_TOKEN:
+    try:
+        with open(CONFIG_FILE, "r") as f:
+            cdata = json.load(f)
+        if not cdata.get("token"):
+            cdata["token"] = BOT_TOKEN
+            with open(CONFIG_FILE, "w") as f:
+                json.dump(cdata, f, indent=4)
+            print("✅ Auto-populated token into config.json")
+    except Exception:
+        pass
+
+
 COOKIE_ARG = None
 if os.path.exists(COOKIES_FILE):
     try:
