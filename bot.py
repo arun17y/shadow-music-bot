@@ -14,19 +14,6 @@ from typing import Optional, List, Dict
 from datetime import datetime, timezone
 import socket
 
-# Prefer IPv6 for discord.com/discord.gg to bypass Cloudflare datacenter IPv4 bans
-_orig_getaddrinfo = socket.getaddrinfo
-def _smart_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-    if host and "discord" in str(host).lower():
-        try:
-            res = _orig_getaddrinfo(host, port, socket.AF_INET6, type, proto, flags)
-            if res:
-                return res
-        except Exception:
-            pass
-    return _orig_getaddrinfo(host, port, family, type, proto, flags)
-socket.getaddrinfo = _smart_getaddrinfo
-
 # Cloudflare Datacenter Rate Limit Bypass (Error Code 0)
 # Uses Chrome 120 TLS fingerprint via curl_cffi to transparently bypass Cloudflare blocks on datacenter IPs
 try:
@@ -1898,7 +1885,7 @@ class MentionLinksView(discord.ui.View):
     def __init__(self, invite_url: str):
         super().__init__(timeout=None)
         self.add_item(discord.ui.Button(label="Invite", url=invite_url, style=discord.ButtonStyle.link))
-        self.add_item(discord.ui.Button(label="Support", url="https://discord.gg/shadowcheats", style=discord.ButtonStyle.link))
+        self.add_item(discord.ui.Button(label="Support", url="https://discord.com/users/1256986886631854080", style=discord.ButtonStyle.link))
 
 class MusicBot(commands.Bot):
     def __init__(self):
@@ -2563,7 +2550,7 @@ class MusicBot(commands.Bot):
 
         <div class="actions">
             <a href="{invite_url}" target="_blank" class="btn btn-primary">➕ Add Bot to Discord</a>
-            <a href="https://discord.gg/shadowcheats" target="_blank" class="btn btn-outline">💬 Support Community</a>
+            <a href="https://discord.com/users/1256986886631854080" target="_blank" class="btn btn-outline">👑 Support / Owner</a>
             <a href="/api/health" target="_blank" class="btn btn-outline">🔍 Health API (/health)</a>
             <a href="/api/logs" target="_blank" class="btn btn-outline">📜 Live Logs (/api/logs)</a>
         </div>
@@ -3994,7 +3981,7 @@ async def slash_about(ctx: commands.Context):
         manage_messages=True
     )
     invite_url = discord.utils.oauth_url(bot.user.id, permissions=perms, scopes=("bot", "applications.commands"))
-    support_url = "https://discord.gg/shadowcheats"
+    support_url = "https://discord.com/users/1256986886631854080"
     vote_url = "https://top.gg/bot/shadowcheats"
 
     embed = discord.Embed(
@@ -4004,13 +3991,13 @@ async def slash_about(ctx: commands.Context):
     )
     embed.description = (
         f"> **SHADOW CHEATS MUSIC** is a high-fidelity Discord music bot streaming 24/7 with zero lag.\n\n"
-        f"• **Commands:** `114`\n"
+        f"• **Commands:** `98`\n"
         f"• **Latency:** `{round(bot.latency * 1000, 2)}ms`\n"
         f"• **Servers:** `{len(bot.guilds)}`\n"
         f"• **24/7 Mode:** `Active`\n\n"
         f"───────────────────────────\n"
         f"**[Links]**\n"
-        f"[Invite Me]({invite_url}) | [Support Server]({support_url})"
+        f"[Invite Me]({invite_url}) | [Support & Owner]({support_url})"
     )
     embed.set_thumbnail(url=bot.user.avatar.url if bot.user.avatar else "")
     embed.set_footer(text="Shadow Cheats Music", icon_url=bot.user.avatar.url if bot.user.avatar else "")
@@ -4033,76 +4020,78 @@ async def slash_purge(ctx: commands.Context, limit: int = 50):
     await ctx.send(embed=ok("Purged Channel", f"Cleaned up **{len(deleted)}** bot messages/commands in this channel."), ephemeral=True)
 
 # 24/7 Mode Command
-@bot.hybrid_command(name="stay247", description="Toggle 24/7 channel presence (Premium Unlocked!)")
-async def slash_stay247(ctx: commands.Context):
-    p = bot.get_player(ctx.guild.id)
-    was_disconnected = not p.voice or not p.voice.is_connected()
-    if was_disconnected:
-        if getattr(ctx.author, "voice", None) and ctx.author.voice.channel:
-            ch = ctx.author.voice.channel
-            try:
-                p.is_connecting = True
-                p.voice = await ch.connect(timeout=20, reconnect=True)
-                p.text_ch = ctx.channel
-                if isinstance(ch, discord.StageChannel):
-                    try: await ctx.guild.me.edit(suppress=False)
-                    except Exception: pass
-            except Exception as e:
-                return await send_response(ctx, embed=err(f"Could not connect to voice channel: {e}"))
-            finally:
-                p.is_connecting = False
-        else:
-            return await send_response(ctx, embed=err("Join a voice channel first to enable 24/7 mode!"))
-    
-    if was_disconnected:
-        p.stay_247 = True
-    else:
-        p.stay_247 = not p.stay_247
+async def handle_247_command(ctx: commands.Context, channel: Optional[discord.VoiceChannel] = None):
+    # Defer interaction immediately to guarantee 3-second Discord deadline is NEVER missed
+    if ctx.interaction and not ctx.interaction.response.is_done():
+        try:
+            await ctx.defer()
+        except Exception:
+            pass
 
-    vc_id = p.voice.channel.id if p.voice and p.voice.channel else None
-    Database.set_247(ctx.guild.id, int(p.stay_247), vc_id, ctx.channel.id)
+    p = bot.get_player(ctx.guild.id)
+    p.text_ch = ctx.channel
     
-    if p.stay_247:
-        ch_name = p.voice.channel.name if p.voice and p.voice.channel else "voice channel"
-        desc = f"24/7 Mode is now **Enabled ✅**.\nThe bot will stay permanently active in **{ch_name}**."
+    # 1. Determine target voice channel
+    target_ch = channel
+    if not target_ch and getattr(ctx.author, "voice", None) and ctx.author.voice.channel:
+        target_ch = ctx.author.voice.channel
+    elif not target_ch and ctx.guild.voice_client and ctx.guild.voice_client.channel:
+        target_ch = ctx.guild.voice_client.channel
+
+    if not target_ch:
+        return await send_response(ctx, embed=err("Join a voice channel or specify one (e.g. `/247 channel:#General`) to configure 24/7 mode!"))
+
+    # 2. Connect or move to voice channel safely
+    try:
+        p.is_connecting = True
+        if ctx.guild.voice_client and ctx.guild.voice_client.is_connected():
+            p.voice = ctx.guild.voice_client
+            if p.voice.channel.id != target_ch.id:
+                await p.voice.move_to(target_ch)
+        else:
+            if ctx.guild.voice_client:
+                try: await ctx.guild.voice_client.disconnect(force=True)
+                except Exception: pass
+            p.voice = await target_ch.connect(timeout=20, reconnect=True, self_deaf=True)
+            
+        if isinstance(target_ch, discord.StageChannel):
+            try: await ctx.guild.me.edit(suppress=False)
+            except Exception: pass
+    except Exception as e:
+        if not ctx.guild.voice_client:
+            return await send_response(ctx, embed=err(f"Could not connect to voice channel: {e}"))
+        p.voice = ctx.guild.voice_client
+    finally:
+        p.is_connecting = False
+
+    # 3. Toggle 24/7 state
+    if p.stay_247 and channel is None and (p.voice and p.voice.channel.id == target_ch.id):
+        p.stay_247 = False
     else:
-        ch_name = p.voice.channel.name if p.voice and p.voice.channel else "voice channel"
-        desc = f"24/7 Mode is now **Disabled ❌**.\nThe bot will automatically disconnect from **{ch_name}** when inactive."
-    await send_response(ctx, embed=ok("24/7 Presence Mode", desc))
+        p.stay_247 = True
+
+    vc_id = target_ch.id if p.stay_247 else None
+    Database.set_247(ctx.guild.id, 1 if p.stay_247 else 0, vc_id, ctx.channel.id)
+
+    if p.stay_247:
+        desc = f"24/7 Presence Mode is now **Enabled ✅**\nThe bot will stay permanently active in {target_ch.mention}."
+    else:
+        desc = f"24/7 Presence Mode is now **Disabled ❌**\nThe bot will automatically disconnect when inactive."
+    await send_response(ctx, embed=ok("24/7 Presence System", desc))
+
+@bot.hybrid_command(name="stay247", description="Toggle 24/7 channel presence (Premium Unlocked!)")
+@app_commands.describe(channel="Target voice channel to stay connected 24/7 (optional)")
+async def slash_stay247(ctx: commands.Context, channel: Optional[discord.VoiceChannel] = None):
+    await handle_247_command(ctx, channel)
 
 @bot.hybrid_command(name="247", description="Set 24/7 system (toggle staying in voice channel)")
-async def slash_247(ctx: commands.Context):
-    p = bot.get_player(ctx.guild.id)
-    was_disconnected = not p.voice or not p.voice.is_connected()
-    if was_disconnected:
-        if getattr(ctx.author, "voice", None) and ctx.author.voice.channel:
-            ch = ctx.author.voice.channel
-            try:
-                p.is_connecting = True
-                p.voice = await ch.connect(timeout=20, reconnect=True)
-                p.text_ch = ctx.channel
-                if isinstance(ch, discord.StageChannel):
-                    try: await ctx.guild.me.edit(suppress=False)
-                    except Exception: pass
-            except Exception as e:
-                return await send_response(ctx, embed=err(f"Could not connect to voice channel: {e}"))
-            finally:
-                p.is_connecting = False
-        else:
-            return await send_response(ctx, embed=err("Join a voice channel first to enable 24/7 mode!"))
-
-    if was_disconnected:
-        p.stay_247 = True
-    else:
-        p.stay_247 = not p.stay_247
-
-    vc_id = p.voice.channel.id if p.voice and p.voice.channel else None
-    Database.set_247(ctx.guild.id, 1 if p.stay_247 else 0, vc_id, ctx.channel.id)
-    await send_response(ctx, embed=ok("24/7 Connection Toggle", f"24/7 stays in voice channel is now **{'Enabled ✅' if p.stay_247 else 'Disabled ❌'}**."))
+@app_commands.describe(channel="Target voice channel to stay connected 24/7 (optional)")
+async def slash_247(ctx: commands.Context, channel: Optional[discord.VoiceChannel] = None):
+    await handle_247_command(ctx, channel)
 
 @bot.command(name="24/7", description="Toggle 24/7 presence connection mode")
-async def prefix_24_7(ctx: commands.Context):
-    await slash_247(ctx)
+async def prefix_24_7(ctx: commands.Context, channel: Optional[discord.VoiceChannel] = None):
+    await handle_247_command(ctx, channel)
 
 # Custom Server Prefix Command
 @bot.hybrid_command(name="setprefix", description="Set Custom Prefix")
@@ -5282,10 +5271,10 @@ async def slash_treblebass(ctx: commands.Context):
         p.voice.stop()
     await send_response(ctx, embed=ok("TrebleBass Filter Toggle", f"TrebleBass filter is now **{'Enabled' if p.filter == 'treblebass' else 'Disabled'}**."))
 
-@bot.hybrid_command(name="support", description="Gives you the link of my support server")
+@bot.hybrid_command(name="support", description="Gives you the link of my support and owner profile")
 async def slash_support(ctx: commands.Context):
-    e = discord.Embed(title="💬 Support Server", color=0x7d5fff)
-    e.description = "Need help or have suggestions? Join our official support community!\n\n**[Click here to join Support Server](https://discord.gg/shadowcheats)**"
+    e = discord.Embed(title="👑 Official Support & Owner", color=0x7d5fff)
+    e.description = "Need help, custom setup, or have inquiries? Contact the bot owner directly!\n\n**[Click here to Message Owner (Arun)](https://discord.com/users/1256986886631854080)**"
     e.set_footer(text="SHADOW CHEATS Support")
     await send_response(ctx, embed=e)
 
@@ -5348,7 +5337,7 @@ def get_home_help_embed(bot_name: str, prefix: str, avatar_url: Optional[str], i
         "ℹ️ » **Information**\n\n"
         "───────────────────────────\n"
         "**[Links]**\n"
-        f"[Invite Me]({invite_url}) | [Support Server](https://discord.gg/shadowcheats)"
+        f"[Invite Me]({invite_url}) | [Support & Owner](https://discord.com/users/1256986886631854080)"
     )
     if avatar_url:
         e.set_thumbnail(url=avatar_url)
