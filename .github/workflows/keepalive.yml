@@ -9,7 +9,7 @@ jobs:
   keepalive:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Singapore Render Service
+      - name: Ping Render Service
         run: |
-          response=$(curl -s -o /dev/null -w "%{http_code}" --max-time 45 https://shadow-cheats-music-sg.onrender.com/health || true)
+          response=$(curl -s -o /dev/null -w "%{http_code}" --max-time 45 https://shadow-cheats-music-eu.onrender.com/health || true)
           echo "Keepalive ping response: HTTP $response"
