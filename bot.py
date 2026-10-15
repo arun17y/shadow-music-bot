@@ -12,6 +12,21 @@ import re
 from collections import deque
 from typing import Optional, List, Dict
 from datetime import datetime, timezone
+import socket
+
+# Prefer IPv6 for discord.com/discord.gg to bypass Cloudflare datacenter IPv4 bans
+_orig_getaddrinfo = socket.getaddrinfo
+def _smart_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    if host and "discord" in str(host).lower():
+        try:
+            res = _orig_getaddrinfo(host, port, socket.AF_INET6, type, proto, flags)
+            if res:
+                return res
+        except Exception:
+            pass
+    return _orig_getaddrinfo(host, port, family, type, proto, flags)
+socket.getaddrinfo = _smart_getaddrinfo
+
 
 BOT_NAME = "SHADOW CHEATS MUSIC"
 
@@ -1831,11 +1846,13 @@ class MentionLinksView(discord.ui.View):
 
 class MusicBot(commands.Bot):
     def __init__(self):
+        proxy = os.environ.get("DISCORD_PROXY") or os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY") or None
         super().__init__(
             command_prefix=self.get_db_prefix,
             intents=intents,
             help_command=None,
             status=discord.Status.dnd,
+            proxy=proxy,
             activity=discord.Activity(
                 type=discord.ActivityType.listening, name="Vibes | /help"
             )
@@ -5472,6 +5489,9 @@ if __name__ == "__main__":
     rate_limit_backoff = 60
     while True:
         try:
+            bot.http.user_agent = "DiscordBot (https://github.com/shadowcheats/music, 2.7.1) Python/3.11 aiohttp/3.9.5"
+            if os.environ.get("DISCORD_API_BASE"):
+                discord.http.Route.BASE = os.environ.get("DISCORD_API_BASE")
             bot.run(BOT_TOKEN)
             rate_limit_backoff = 60
             break
