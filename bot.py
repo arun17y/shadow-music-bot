@@ -10,7 +10,7 @@ import logging
 import sqlite3
 import re
 from collections import deque
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Union
 from datetime import datetime, timezone
 import socket
 
@@ -22,10 +22,8 @@ try:
     from curl_cffi.requests import AsyncSession as _CurlAsyncSession
 
     _orig_http_request = discord.http.HTTPClient.request
-    _stealth_session_instance = None
 
     async def _stealth_http_request(self, route: discord.http.Route, *args, **kwargs):
-        global _stealth_session_instance
         try:
             return await _orig_http_request(self, route, *args, **kwargs)
         except Exception as exc:
@@ -34,9 +32,6 @@ try:
                 raise
             
             print(f"🛡️ [Cloudflare Bypass] Intercepted {exc}. Rerouting {route.method} {route.url} through Chrome TLS impersonation...")
-            if _stealth_session_instance is None:
-                _stealth_session_instance = _CurlAsyncSession(impersonate="chrome120")
-                
             req_headers = {
                 'User-Agent': getattr(self, 'user_agent', 'DiscordBot (https://github.com/shadowcheats, 2.4.0)'),
                 'Authorization': f'Bot {self.token}' if getattr(self, 'token', None) else ''
@@ -44,24 +39,25 @@ try:
             if 'headers' in kwargs and kwargs['headers']:
                 req_headers.update(kwargs['headers'])
                 
-            res = await _stealth_session_instance.request(
-                route.method,
-                route.url,
-                headers=req_headers,
-                json=kwargs.get('json'),
-                data=kwargs.get('data'),
-                timeout=kwargs.get('timeout', 30)
-            )
-            print(f"✅ [Cloudflare Bypass] Response: HTTP {res.status_code}")
-            if res.status_code in (200, 201):
-                try:
-                    return res.json()
-                except Exception:
-                    return res.text
-            elif res.status_code == 204:
-                return None
-            else:
-                raise exc
+            async with _CurlAsyncSession(impersonate="chrome120") as s:
+                res = await s.request(
+                    route.method,
+                    route.url,
+                    headers=req_headers,
+                    json=kwargs.get('json'),
+                    data=kwargs.get('data'),
+                    timeout=kwargs.get('timeout', 30)
+                )
+                print(f"✅ [Cloudflare Bypass] Response: HTTP {res.status_code}")
+                if res.status_code in (200, 201):
+                    try:
+                        return res.json()
+                    except Exception:
+                        return res.text
+                elif res.status_code == 204:
+                    return None
+                else:
+                    raise exc
 
     discord.http.HTTPClient.request = _stealth_http_request
     print("🔒 Stealth Chrome TLS Cloudflare Bypass installed for Discord API.")
@@ -2779,7 +2775,11 @@ async def on_voice_state_update(member, before, after):
             if stay_247 and (vc_id or before.channel.id):
                 target_id = vc_id or before.channel.id
                 await asyncio.sleep(2)
-                if p.voice and p.voice.is_connected():
+                # Check if bot is ALREADY connected via guild.voice_client
+                existing_vc = member.guild.voice_client
+                if (p.voice and p.voice.is_connected()) or (existing_vc and existing_vc.is_connected()):
+                    if existing_vc:
+                        p.voice = existing_vc
                     return
                 if getattr(p, "is_connecting", False):
                     return
@@ -2880,32 +2880,44 @@ async def check_voice_channels():
                     continue
                 p = bot.get_player(guild_id)
                 p.stay_247 = True
-                if not p.voice or not p.voice.is_connected():
-                    if getattr(p, "is_connecting", False):
-                        continue
-                    ch = guild.get_channel(vc_id)
-                    if ch and isinstance(ch, (discord.VoiceChannel, discord.StageChannel)):
-                        try:
-                            p.is_connecting = True
-                            p.voice = await ch.connect(timeout=20, reconnect=True)
-                            p.stay_247 = True
-                            if tx_id:
-                                p.text_ch = guild.get_channel(tx_id)
-                            if isinstance(ch, discord.StageChannel):
-                                try: await guild.me.edit(suppress=False)
-                                except Exception: pass
-                            print(f"📡 [24/7 Watchdog] Reconnected to '{ch.name}' in '{guild.name}'")
-                        except Exception as e:
-                            print(f"⚠️ [24/7 Watchdog Error] Failed reconnecting to '{ch.name}': {e}")
-                        finally:
-                            p.is_connecting = False
+
+                existing_vc = guild.voice_client
+                if existing_vc and existing_vc.is_connected():
+                    p.voice = existing_vc
+                    if existing_vc.channel.id != vc_id:
+                        ch = guild.get_channel(vc_id)
+                        if ch and isinstance(ch, (discord.VoiceChannel, discord.StageChannel)):
+                            try:
+                                await existing_vc.move_to(ch)
+                            except Exception:
+                                pass
+                    continue
+
+                if getattr(p, "is_connecting", False):
+                    continue
+
+                ch = guild.get_channel(vc_id)
+                if ch and isinstance(ch, (discord.VoiceChannel, discord.StageChannel)):
+                    try:
+                        p.is_connecting = True
+                        p.voice = await ch.connect(timeout=20, reconnect=True)
+                        p.stay_247 = True
+                        if tx_id:
+                            p.text_ch = guild.get_channel(tx_id)
+                        if isinstance(ch, discord.StageChannel):
+                            try: await guild.me.edit(suppress=False)
+                            except Exception: pass
+                        print(f"📡 [24/7 Watchdog] Reconnected to '{ch.name}' in '{guild.name}'")
+                    except Exception as e:
+                        print(f"⚠️ [24/7 Watchdog Error] Failed reconnecting to '{ch.name}': {e}")
+                    finally:
+                        p.is_connecting = False
     except Exception as e:
         print(f"⚠️ [24/7 Watchdog Check Error]: {e}")
 
     # 2. Automatically sync any active voice connection into 24/7 database
     for guild_id, p in list(bot.players.items()):
-        if p.voice and p.voice.is_connected() and p.voice.channel:
-            p.stay_247 = True
+        if p.voice and p.voice.is_connected() and p.voice.channel and p.stay_247:
             tx_id = p.text_ch.id if p.text_ch else None
             Database.set_247(guild_id, 1, p.voice.channel.id, tx_id)
 
@@ -4020,7 +4032,7 @@ async def slash_purge(ctx: commands.Context, limit: int = 50):
     await ctx.send(embed=ok("Purged Channel", f"Cleaned up **{len(deleted)}** bot messages/commands in this channel."), ephemeral=True)
 
 # 24/7 Mode Command
-async def handle_247_command(ctx: commands.Context, channel: Optional[discord.VoiceChannel] = None):
+async def handle_247_command(ctx: commands.Context, channel: Optional[Union[discord.VoiceChannel, discord.StageChannel]] = None):
     # Defer interaction immediately to guarantee 3-second Discord deadline is NEVER missed
     if ctx.interaction and not ctx.interaction.response.is_done():
         try:
@@ -4081,16 +4093,16 @@ async def handle_247_command(ctx: commands.Context, channel: Optional[discord.Vo
 
 @bot.hybrid_command(name="stay247", description="Toggle 24/7 channel presence (Premium Unlocked!)")
 @app_commands.describe(channel="Target voice channel to stay connected 24/7 (optional)")
-async def slash_stay247(ctx: commands.Context, channel: Optional[discord.VoiceChannel] = None):
+async def slash_stay247(ctx: commands.Context, channel: Optional[Union[discord.VoiceChannel, discord.StageChannel]] = None):
     await handle_247_command(ctx, channel)
 
 @bot.hybrid_command(name="247", description="Set 24/7 system (toggle staying in voice channel)")
 @app_commands.describe(channel="Target voice channel to stay connected 24/7 (optional)")
-async def slash_247(ctx: commands.Context, channel: Optional[discord.VoiceChannel] = None):
+async def slash_247(ctx: commands.Context, channel: Optional[Union[discord.VoiceChannel, discord.StageChannel]] = None):
     await handle_247_command(ctx, channel)
 
 @bot.command(name="24/7", description="Toggle 24/7 presence connection mode")
-async def prefix_24_7(ctx: commands.Context, channel: Optional[discord.VoiceChannel] = None):
+async def prefix_24_7(ctx: commands.Context, channel: Optional[Union[discord.VoiceChannel, discord.StageChannel]] = None):
     await handle_247_command(ctx, channel)
 
 # Custom Server Prefix Command
@@ -5431,6 +5443,11 @@ async def slash_help(ctx: commands.Context):
 @bot.before_invoke
 async def before_any_command(ctx: commands.Context):
     Database.increment_stat("commands_run")
+    if ctx.interaction and not ctx.interaction.response.is_done():
+        try:
+            await ctx.defer()
+        except Exception:
+            pass
 
 @bot.event
 async def on_app_command_completion(interaction: discord.Interaction, command: discord.app_commands.Command):
