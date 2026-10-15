@@ -2627,18 +2627,18 @@ class MusicBot(commands.Bot):
 
             async def sync_commands_api(request):
                 try:
-                    synced_guilds = 0
+                    cleared_guilds = 0
                     for g in self.guilds:
                         try:
-                            self.tree.copy_global_to(guild=g)
+                            self.tree.clear_commands(guild=g)
                             await self.tree.sync(guild=g)
-                            synced_guilds += 1
+                            cleared_guilds += 1
                         except Exception:
                             pass
                     synced = await self.tree.sync()
                     return web.json_response({
                         "status": "ok",
-                        "synced_guilds": synced_guilds,
+                        "cleared_guilds": cleared_guilds,
                         "global_commands_synced": len(synced),
                         "commands": [c.name for c in synced]
                     })
@@ -2692,19 +2692,20 @@ class MusicBot(commands.Bot):
         asyncio.create_task(set_booted())
         asyncio.create_task(self.keep_alive_pinger())
 
-        async def sync_all_guilds():
+        async def purge_guild_duplicates():
             await asyncio.sleep(2)
             try:
                 for g in self.guilds:
                     try:
-                        self.tree.copy_global_to(guild=g)
+                        self.tree.clear_commands(guild=g)
                         await self.tree.sync(guild=g)
+                        await asyncio.sleep(0.5)
                     except Exception as ge:
-                        print(f"⚠️ Guild sync warning for {g.name}: {ge}")
-                print(f"⚡ Instant guild slash command sync complete across {len(self.guilds)} guilds.")
+                        print(f"⚠️ Guild cleanup warning for {g.name}: {ge}")
+                print(f"🧹 Purged all duplicate guild commands across {len(self.guilds)} guilds. Single clean global tree active.")
             except Exception as e:
-                print(f"⚠️ Guild sync error: {e}")
-        asyncio.create_task(sync_all_guilds())
+                print(f"⚠️ Duplicate cleanup error: {e}")
+        asyncio.create_task(purge_guild_duplicates())
 
         async def reconnect_247_channels():
             await asyncio.sleep(3)
@@ -2744,18 +2745,16 @@ class MusicBot(commands.Bot):
 
 bot = MusicBot()
 
-@bot.command(name="sync", description="Sync slash commands instantly to this server")
+@bot.command(name="sync", description="Purge duplicate guild commands and sync single global tree")
 @commands.has_permissions(administrator=True)
 async def cmd_sync(ctx: commands.Context):
-    msg = await ctx.send("⚡ Syncing slash commands directly to this server for instant activation...")
+    msg = await ctx.send("🧹 Purging duplicate guild commands from this server...")
     try:
         if ctx.guild:
-            bot.tree.copy_global_to(guild=ctx.guild)
-            synced = await bot.tree.sync(guild=ctx.guild)
-            await msg.edit(content=f"✅ Instantly synced **{len(synced)}** slash commands directly to **{ctx.guild.name}**! They are active right now.")
-        else:
-            synced = await bot.tree.sync()
-            await msg.edit(content=f"✅ Synced **{len(synced)}** global commands.")
+            bot.tree.clear_commands(guild=ctx.guild)
+            await bot.tree.sync(guild=ctx.guild)
+        synced = await bot.tree.sync()
+        await msg.edit(content=f"✅ Purged duplicates! Single clean global slash tree active with **{len(synced)}** unique commands.")
     except Exception as e:
         await msg.edit(content=f"⚠️ Sync error: {e}")
 
