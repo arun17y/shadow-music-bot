@@ -33,11 +33,12 @@ try:
             
             print(f"🛡️ [Cloudflare Bypass] Intercepted {exc}. Rerouting {route.method} {route.url} through Chrome TLS impersonation...")
             req_headers = {
-                'User-Agent': getattr(self, 'user_agent', 'DiscordBot (https://github.com/shadowcheats, 2.4.0)'),
                 'Authorization': f'Bot {self.token}' if getattr(self, 'token', None) else ''
             }
             if 'headers' in kwargs and kwargs['headers']:
-                req_headers.update(kwargs['headers'])
+                for k, v in kwargs['headers'].items():
+                    if k.lower() != 'user-agent':
+                        req_headers[k] = v
                 
             async with _CurlAsyncSession(impersonate="chrome120") as s:
                 res = await s.request(
@@ -56,6 +57,29 @@ try:
                         return res.text
                 elif res.status_code == 204:
                     return None
+                elif res.status_code == 429:
+                    try:
+                        retry_after = float(res.json().get('retry_after', 5.0))
+                    except Exception:
+                        retry_after = 5.0
+                    print(f"⏳ [Cloudflare Bypass] Rate limited. Sleeping for {retry_after}s before retry...")
+                    await asyncio.sleep(retry_after)
+                    res = await s.request(
+                        route.method,
+                        route.url,
+                        headers=req_headers,
+                        json=kwargs.get('json'),
+                        data=kwargs.get('data'),
+                        timeout=kwargs.get('timeout', 30)
+                    )
+                    if res.status_code in (200, 201):
+                        try:
+                            return res.json()
+                        except Exception:
+                            return res.text
+                    elif res.status_code == 204:
+                        return None
+                    raise exc
                 else:
                     raise exc
 
