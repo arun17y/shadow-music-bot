@@ -1899,7 +1899,7 @@ class MusicBot(commands.Bot):
     async def keep_alive_pinger(self):
         """24/7 Free Hosting Keepalive: Pings self URL every 5 minutes to prevent Render from sleeping."""
         await self.wait_until_ready()
-        target_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://shadow-cheats-music-0w3u.onrender.com"
+        target_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://shadow-cheats-music-sg.onrender.com"
         ping_endpoint = f"{target_url.rstrip('/')}/health"
         print(f"🔄 24/7 Keepalive self-pinger initialized for {ping_endpoint} (interval: 300s)")
         
