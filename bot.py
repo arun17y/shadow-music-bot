@@ -5482,12 +5482,14 @@ if __name__ == "__main__":
             sys.exit(1)
         except Exception as e:
             err_str = str(e)
+            import traceback
+            tb = traceback.format_exc()
             if "429" in err_str or "1015" in err_str or "rate limit" in err_str.lower():
-                print(f"⚠️ Discord Cloudflare Gateway Rate Limit encountered. Backing off for {rate_limit_backoff} seconds before reconnecting...")
+                print(f"⚠️ Discord Cloudflare Gateway Rate Limit encountered: {e} ({tb}). Backing off for {rate_limit_backoff}s...")
                 time.sleep(rate_limit_backoff)
                 rate_limit_backoff = min(300, rate_limit_backoff + 60)
             else:
-                print(f"⚠️ Gateway connection error: {e}. Retrying connection in 10 seconds...")
+                print(f"⚠️ Gateway connection error: {e} ({tb}). Retrying connection in 10s...")
                 time.sleep(10)
             try:
                 bot.clear()
