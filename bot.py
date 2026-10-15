@@ -27,6 +27,62 @@ def _smart_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
     return _orig_getaddrinfo(host, port, family, type, proto, flags)
 socket.getaddrinfo = _smart_getaddrinfo
 
+# Cloudflare Datacenter Rate Limit Bypass (Error Code 0)
+# Uses Chrome 120 TLS fingerprint via curl_cffi to transparently bypass Cloudflare blocks on datacenter IPs
+try:
+    import discord.http
+    import discord.errors
+    from curl_cffi.requests import AsyncSession as _CurlAsyncSession
+
+    _orig_http_request = discord.http.HTTPClient.request
+    _stealth_session_instance = None
+
+    async def _stealth_http_request(self, route: discord.http.Route, *args, **kwargs):
+        global _stealth_session_instance
+        try:
+            return await _orig_http_request(self, route, *args, **kwargs)
+        except Exception as exc:
+            err_msg = str(exc).lower()
+            if "429" not in err_msg and "blocked" not in err_msg and "rate limit" not in err_msg:
+                raise
+            
+            print(f"🛡️ [Cloudflare Bypass] Intercepted {exc}. Rerouting {route.method} {route.url} through Chrome TLS impersonation...")
+            if _stealth_session_instance is None:
+                _stealth_session_instance = _CurlAsyncSession(impersonate="chrome120")
+                
+            req_headers = {
+                'User-Agent': getattr(self, 'user_agent', 'DiscordBot (https://github.com/shadowcheats, 2.4.0)'),
+                'Authorization': f'Bot {self.token}' if getattr(self, 'token', None) else ''
+            }
+            if 'headers' in kwargs and kwargs['headers']:
+                req_headers.update(kwargs['headers'])
+                
+            res = await _stealth_session_instance.request(
+                route.method,
+                route.url,
+                headers=req_headers,
+                json=kwargs.get('json'),
+                data=kwargs.get('data'),
+                timeout=kwargs.get('timeout', 30)
+            )
+            print(f"✅ [Cloudflare Bypass] Response: HTTP {res.status_code}")
+            if res.status_code in (200, 201):
+                try:
+                    return res.json()
+                except Exception:
+                    return res.text
+            elif res.status_code == 204:
+                return None
+            else:
+                raise exc
+
+    discord.http.HTTPClient.request = _stealth_http_request
+    print("🔒 Stealth Chrome TLS Cloudflare Bypass installed for Discord API.")
+except Exception as _patch_err:
+    print(f"⚠️ Could not install stealth HTTPClient patch: {_patch_err}")
+
+
+
 
 BOT_NAME = "SHADOW CHEATS MUSIC"
 
