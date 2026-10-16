@@ -1323,6 +1323,18 @@ class YTSource(discord.PCMVolumeTransformer):
 
         def run():
             last_err = None
+            # Tier 0: OAuth2 Google TV Auth (Permanent bypass for datacenter IPs)
+            if os.path.exists("oauth2.json") or os.environ.get("YOUTUBE_OAUTH2_TOKEN"):
+                try:
+                    t0 = opts.copy()
+                    t0["username"] = "oauth2"
+                    t0["password"] = ""
+                    t0["cookiefile"] = None
+                    return yt_dlp.YoutubeDL(t0).extract_info(url, download=False)
+                except Exception as e:
+                    last_err = e
+                    print(f"⚠️ OAuth2 extraction failed ({e}). Trying fallbacks...")
+
             # 1. Primary: Web + MWeb with PO Token daemon (port 4416)
             try:
                 t1 = opts.copy()
@@ -2777,9 +2789,88 @@ class MusicBot(commands.Bot):
                 except Exception as ex:
                     return web.json_response({"status": "error", "error": str(ex)}, status=500)
 
+            async def auth_view(request):
+                import urllib.request, json
+                try:
+                    if os.path.exists("oauth2.json"):
+                        try:
+                            with open("oauth2.json", "r", encoding="utf-8") as f:
+                                tok = json.load(f)
+                            if tok and "access_token" in tok:
+                                return web.Response(text="""<!DOCTYPE html><html><body style="background:#0f1117; color:#57F287; font-family:sans-serif; text-align:center; padding-top:60px;"><h1>✅ YouTube OAuth2 is already active!</h1><p style="color:#aaa;">Render server has verified authorization. YouTube audio will stream without restrictions.</p></body></html>""", content_type="text/html")
+                        except Exception:
+                            pass
+
+                    _cid = '861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com'
+                    _sec = 'SboVhoG9s0rNafixCSGGKXAT'
+                    req = urllib.request.Request(
+                        'https://www.youtube.com/o/oauth2/device/code',
+                        data=json.dumps({
+                            'client_id': _cid,
+                            'scope': 'https://gdata.youtube.com https://www.googleapis.com/auth/youtube',
+                            'device_id': 'f7d2a8b3c9e102948571628394059681',
+                            'device_model': 'ytlr::'
+                        }).encode(),
+                        headers={'Content-Type': 'application/json'}
+                    )
+                    with urllib.request.urlopen(req, timeout=8) as resp:
+                        cdata = json.loads(resp.read().decode())
+                    
+                    device_code = cdata.get("device_code")
+                    user_code = cdata.get("user_code")
+                    verification_url = cdata.get("verification_url", "https://www.google.com/device")
+                    interval = int(cdata.get("interval", 5))
+
+                    async def poll_token():
+                        for _ in range(60):
+                            await asyncio.sleep(interval)
+                            try:
+                                preq = urllib.request.Request(
+                                    'https://www.youtube.com/o/oauth2/token',
+                                    data=json.dumps({
+                                        'client_id': _cid,
+                                        'client_secret': _sec,
+                                        'code': device_code,
+                                        'grant_type': 'urn:ietf:params:oauth:grant-type:device_code'
+                                    }).encode(),
+                                    headers={'Content-Type': 'application/json'}
+                                )
+                                with urllib.request.urlopen(preq, timeout=5) as presp:
+                                    tdata = json.loads(presp.read().decode())
+                                if "access_token" in tdata:
+                                    tdata["expires"] = datetime.now(timezone.utc).timestamp() + tdata.get("expires_in", 3600)
+                                    with open("oauth2.json", "w", encoding="utf-8") as f:
+                                        json.dump(tdata, f, indent=2)
+                                    print("✅ YouTube OAuth2 successfully authenticated and saved to oauth2.json!")
+                                    break
+                            except Exception:
+                                pass
+
+                    asyncio.create_task(poll_token())
+
+                    html = f"""<!DOCTYPE html>
+<html>
+<head><title>YouTube Cloud Authorization</title></head>
+<body style="background:#0f1117; color:#fff; font-family:sans-serif; text-align:center; padding-top:60px;">
+    <h1>🔑 YouTube Cloud Authorization</h1>
+    <p style="color:#aaa;">To enable 24/7 uninterrupted high-quality YouTube playback on Render:</p>
+    <div style="background:#1e222d; padding:25px 40px; display:inline-block; border-radius:12px; margin:20px; border:1px solid #2e3343;">
+        <p style="font-size:18px; margin:5px;">Step 1: Open <a href="{verification_url}" target="_blank" style="color:#5865F2; font-weight:bold;">{verification_url}</a></p>
+        <p style="font-size:32px; font-weight:bold; letter-spacing:4px; color:#57F287; margin:20px 0;">{user_code}</p>
+        <p style="font-size:15px; color:#ddd;">Step 2: Enter the code above and click Allow.</p>
+    </div>
+    <p style="color:#888; font-size:14px;">The bot will automatically capture the token within 5 seconds of confirmation.</p>
+</body>
+</html>"""
+                    return web.Response(text=html, content_type="text/html")
+                except Exception as ex:
+                    return web.json_response({"status": "error", "error": str(ex)}, status=500)
+
             app.router.add_get("/", root_view)
             app.router.add_get("/api/health", health_check)
             app.router.add_get("/health", health_check)
+            app.router.add_get("/api/auth", auth_view)
+            app.router.add_get("/auth", auth_view)
             app.router.add_get("/api/stats", stats_api)
             app.router.add_get("/api/logs", logs_view)
             app.router.add_get("/api/test_extract", test_extract_view)
@@ -2918,6 +3009,82 @@ async def cmd_setcookies(ctx: commands.Context, *, cookie_content: str = None):
         await ctx.send("✅ YouTube cookies updated and applied to yt-dlp in real time!")
     except Exception as e:
         await ctx.send(f"❌ Error saving cookies: {e}")
+
+@bot.hybrid_command(name="auth", description="Authenticate YouTube account via Google Device Code (Permanent Render bypass)")
+async def cmd_auth(ctx: commands.Context):
+    msg = await ctx.send("🔄 Requesting YouTube Cloud Device Code from Google...")
+    try:
+        import urllib.request, json
+        _cid = '861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com'
+        _sec = 'SboVhoG9s0rNafixCSGGKXAT'
+        req = urllib.request.Request(
+            'https://www.youtube.com/o/oauth2/device/code',
+            data=json.dumps({
+                'client_id': _cid,
+                'scope': 'https://gdata.youtube.com https://www.googleapis.com/auth/youtube',
+                'device_id': 'f7d2a8b3c9e102948571628394059681',
+                'device_model': 'ytlr::'
+            }).encode(),
+            headers={'Content-Type': 'application/json'}
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            cdata = json.loads(resp.read().decode())
+        
+        device_code = cdata.get("device_code")
+        user_code = cdata.get("user_code")
+        verification_url = cdata.get("verification_url", "https://www.google.com/device")
+        interval = int(cdata.get("interval", 5))
+
+        embed = discord.Embed(
+            title="🔑 YouTube Cloud Authorization",
+            description=(
+                f"**To activate 24/7 uninterrupted original YouTube playback on Render:**\n\n"
+                f"1️⃣ Open **[google.com/device]({verification_url})**\n"
+                f"2️⃣ Enter Code: **`{user_code}`**\n"
+                f"3️⃣ Click **Allow** on your Google Account\n\n"
+                f"⏳ *Listening for authorization in real time...*"
+            ),
+            color=0x5865F2
+        )
+        await msg.edit(content=None, embed=embed)
+
+        async def poll_token():
+            for _ in range(60):
+                await asyncio.sleep(interval)
+                try:
+                    preq = urllib.request.Request(
+                        'https://www.youtube.com/o/oauth2/token',
+                        data=json.dumps({
+                            'client_id': _cid,
+                            'client_secret': _sec,
+                            'code': device_code,
+                            'grant_type': 'urn:ietf:params:oauth:grant-type:device_code'
+                        }).encode(),
+                        headers={'Content-Type': 'application/json'}
+                    )
+                    with urllib.request.urlopen(preq, timeout=5) as presp:
+                        tdata = json.loads(presp.read().decode())
+                    if "access_token" in tdata:
+                        tdata["expires"] = datetime.now(timezone.utc).timestamp() + tdata.get("expires_in", 3600)
+                        with open("oauth2.json", "w", encoding="utf-8") as f:
+                            json.dump(tdata, f, indent=2)
+                        print("✅ YouTube OAuth2 successfully authenticated and saved to oauth2.json!")
+                        ok_embed = discord.Embed(
+                            title="✅ YouTube Cloud Authorization Successful!",
+                            description="Real-time YouTube streaming is now fully unlocked on Render. All tracks will play original full audio without restrictions.",
+                            color=0x57F287
+                        )
+                        try:
+                            await msg.edit(embed=ok_embed)
+                        except Exception:
+                            pass
+                        break
+                except Exception:
+                    pass
+
+        asyncio.create_task(poll_token())
+    except Exception as e:
+        await msg.edit(content=f"❌ Failed to request device code from Google: {e}")
 
 @bot.event
 async def on_message(message: discord.Message):

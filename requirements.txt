@@ -5,3 +5,4 @@ PyNaCl
 aiohttp
 psutil
 davey
+yt-dlp-youtube-oauth2
