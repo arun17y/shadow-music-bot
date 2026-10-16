@@ -2173,6 +2173,48 @@ class MusicBot(commands.Bot):
                         get_pot = str(ge)
                     return web.json_response({"ping": ping, "get_pot": get_pot})
 
+            async def debug_ytdlp_view(request):
+                url = request.query.get("url") or "https://www.youtube.com/watch?v=DLlXI1-_o7Y"
+                client = request.query.get("client") or "web"
+                use_pot = request.query.get("pot", "1") == "1"
+                skip_webpage = request.query.get("skip_webpage") == "1"
+                import io
+                log_stream = io.StringIO()
+                class DebugLogger:
+                    def debug(self, msg): log_stream.write(f"[DEBUG] {msg}\n")
+                    def info(self, msg): log_stream.write(f"[INFO] {msg}\n")
+                    def warning(self, msg): log_stream.write(f"[WARN] {msg}\n")
+                    def error(self, msg): log_stream.write(f"[ERROR] {msg}\n")
+                    def trace(self, msg): log_stream.write(f"[TRACE] {msg}\n")
+                
+                ext_args = {
+                    "youtube": {
+                        "player_client": [client],
+                    }
+                }
+                if use_pot:
+                    ext_args["youtube"]["fetch_pot"] = ["always"]
+                    ext_args["youtube"]["pot_trace"] = ["true"]
+                    ext_args["youtubepot-bgutilhttp"] = {"base_url": ["http://127.0.0.1:4416"]}
+
+                if skip_webpage:
+                    ext_args["youtube"]["player_skip"] = ["webpage"]
+
+                o = {
+                    "format": "18/bestaudio/best/b",
+                    "logger": DebugLogger(),
+                    "verbose": True,
+                    "extractor_args": ext_args
+                }
+                err = None
+                info = None
+                try:
+                    info = await asyncio.get_event_loop().run_in_executor(None, lambda: yt_dlp.YoutubeDL(o).extract_info(url, download=False))
+                except Exception as e:
+                    err = str(e)
+                res = f"ERROR: {err}\n\nHAS_URL: {bool(info.get('url')) if info else False}\nSTREAM_URL: {info.get('url') if info else None}\n\nLOGS:\n{log_stream.getvalue()}"
+                return web.Response(text=res, content_type="text/plain")
+
             async def test_stream_view(request):
                 url = request.query.get("url") or request.query.get("q") or "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
                 try:
@@ -2744,6 +2786,7 @@ class MusicBot(commands.Bot):
             app.router.add_get("/api/test_stream", test_stream_view)
             app.router.add_get("/api/probe_clients", probe_clients_view)
             app.router.add_get("/api/test_pot", test_pot_api)
+            app.router.add_get("/api/debug_ytdlp", debug_ytdlp_view)
             app.router.add_get("/api/formats", formats_view)
             app.router.add_get("/api/test_pcm", test_pcm_view)
             app.router.add_get("/api/diagnose", diagnose_view)
