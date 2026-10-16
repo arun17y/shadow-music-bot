@@ -1021,21 +1021,21 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "18/bestaudio/best/b",
+    "format": "bestaudio/best",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": None,
+    "cookiefile": COOKIES_FILE if (os.path.exists(COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 50) else None,
     "socket_timeout": 12,
-    "retries": 2,
-    "extractor_retries": 2,
-    "js_runtimes": {"node": {}},
+    "retries": 3,
+    "extractor_retries": 3,
+    "js_runtimes": {"deno": {}},
     "extractor_args": {
         "youtube": {
-            "player_client": ["web", "mweb", "android"],
+            "player_client": ["tvhtml5", "web_embedded", "web", "mweb", "android", "ios"],
             "fetch_pot": ["always"]
         },
         "youtubepot-bgutilhttp": {
@@ -1160,7 +1160,7 @@ class YTSource(discord.PCMVolumeTransformer):
         opts["extract_flat"] = "in_playlist"
         opts["socket_timeout"] = 8
         is_search = not query.startswith("http")
-        q = f"ytsearch5:{query}" if is_search else query
+        q = f"ytsearch10:{query}" if is_search else query
             
         def run():
             return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
@@ -1218,7 +1218,7 @@ class YTSource(discord.PCMVolumeTransformer):
             q = query
             is_search = False
         elif is_search:
-            q = f"ytsearch5:{query}"
+            q = f"ytsearch10:{query}"
         else:
             q = query
         
@@ -1318,12 +1318,14 @@ class YTSource(discord.PCMVolumeTransformer):
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = False
-        opts["format"] = "18/bestaudio/best/b"
+        opts["format"] = "bestaudio/best"
         opts["socket_timeout"] = 12
 
         def run():
             last_err = None
-            # Tier 0: OAuth2 Google TV Auth (Permanent bypass for datacenter IPs)
+            cookie_path = COOKIES_FILE if (os.path.exists(COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 50) else None
+
+            # Tier 0: OAuth2 Google TV Auth (Permanent bypass for datacenter IPs if active)
             if os.path.exists("oauth2.json") or os.environ.get("YOUTUBE_OAUTH2_TOKEN"):
                 try:
                     t0 = opts.copy()
@@ -1333,16 +1335,16 @@ class YTSource(discord.PCMVolumeTransformer):
                     return yt_dlp.YoutubeDL(t0).extract_info(url, download=False)
                 except Exception as e:
                     last_err = e
-                    print(f"⚠️ OAuth2 extraction failed ({e}). Trying fallbacks...")
+                    print(f"⚠️ OAuth2 extraction failed ({e}). Trying cookie & POT tiers...")
 
-            # 1. Primary: Web + MWeb with PO Token daemon (port 4416)
+            # Tier 1: Cookies + PO Token (tvhtml5, web_embedded, web, mweb)
             try:
                 t1 = opts.copy()
-                t1["cookiefile"] = None
-                t1["js_runtimes"] = {"node": {}}
+                if cookie_path:
+                    t1["cookiefile"] = cookie_path
                 t1["extractor_args"] = {
                     "youtube": {
-                        "player_client": ["web", "mweb"],
+                        "player_client": ["visionos", "ios", "android", "tvhtml5", "web_embedded", "web", "mweb"],
                         "fetch_pot": ["always"]
                     },
                     "youtubepot-bgutilhttp": {
@@ -1352,46 +1354,30 @@ class YTSource(discord.PCMVolumeTransformer):
                 return yt_dlp.YoutubeDL(t1).extract_info(url, download=False)
             except Exception as e:
                 last_err = e
-                print(f"⚠️ Primary Web + PO Token extraction failed ({e}). Trying Android client...")
+                print(f"⚠️ Tier 1 (tvhtml5+web+pot) failed ({e}). Trying mobile clients...")
 
-            # 2. Fallback: Android client
+            # Tier 2: Mobile / Embedded clients with cookies
             try:
                 t2 = opts.copy()
-                t2["cookiefile"] = None
+                if cookie_path:
+                    t2["cookiefile"] = cookie_path
                 t2["extractor_args"] = {
                     "youtube": {
-                        "player_client": ["android"]
+                        "player_client": ["android", "ios", "visionos"]
                     }
                 }
                 return yt_dlp.YoutubeDL(t2).extract_info(url, download=False)
             except Exception as e:
                 last_err = e
-                print(f"⚠️ Android client failed ({e}). Trying iOS client...")
+                print(f"⚠️ Tier 2 (android+ios+visionos) failed ({e}). Trying pure yt-dlp default...")
 
-            # 3. Fallback: iOS client
+            # Tier 3: Pure yt-dlp default with cookies
             try:
                 t3 = opts.copy()
-                t3["cookiefile"] = None
-                t3["extractor_args"] = {
-                    "youtube": {
-                        "player_client": ["ios"]
-                    }
-                }
+                if cookie_path:
+                    t3["cookiefile"] = cookie_path
+                t3.pop("extractor_args", None)
                 return yt_dlp.YoutubeDL(t3).extract_info(url, download=False)
-            except Exception as e:
-                last_err = e
-                print(f"⚠️ iOS client failed ({e}). Trying TV embedded client...")
-
-            # 4. Fallback: TV embedded client
-            try:
-                t4 = opts.copy()
-                t4["cookiefile"] = None
-                t4["extractor_args"] = {
-                    "youtube": {
-                        "player_client": ["tv_embedded", "tv"]
-                    }
-                }
-                return yt_dlp.YoutubeDL(t4).extract_info(url, download=False)
             except Exception as e:
                 last_err = e
                 print(f"❌ All direct YouTube audio stream extractions failed: {e}")
@@ -2214,6 +2200,7 @@ class MusicBot(commands.Bot):
 
                 o = {
                     "format": "18/bestaudio/best/b",
+                    "cookiefile": COOKIES_FILE if (os.path.exists(COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 50) else None,
                     "logger": DebugLogger(),
                     "verbose": True,
                     "extractor_args": ext_args
