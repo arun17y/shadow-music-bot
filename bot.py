@@ -1222,6 +1222,7 @@ class YTSource(discord.PCMVolumeTransformer):
                 if not e: continue
                 dur = int(e.get("duration") or 0)
                 url = e.get("url") or e.get("webpage_url") or ""
+                title = (e.get("title") or "").lower()
                 # Strictly filter out YouTube Shorts (duration < 60s or /shorts/ in url or #shorts in title)
                 if "/shorts/" in url or "#shorts" in title or "#short" in title or (0 < dur < 60):
                     continue
