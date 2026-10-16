@@ -329,7 +329,7 @@ if os.path.exists(COOKIES_FILE):
                 if _parts[0].startswith("."):
                     _parts[1] = "TRUE"
                 _clean_lines.append("\t".join(_parts) + "\n")
-                if any(k in _parts[5] for k in ["LOGIN_INFO", "__Secure-3PSID", "__Secure-1PSID", "SID"]):
+                if "LOGIN_INFO" in _parts[5]:
                     has_yt_login = True
         with open(COOKIES_FILE, "w", encoding="utf-8") as _cf:
             _cf.writelines(_clean_lines)
@@ -1019,7 +1019,7 @@ YTDL_OPTIONS = {
     "extractor_retries": 2,
     "extractor_args": {
         "youtube": {
-            "player_client": ["tv", "ios", "android", "web"]
+            "player_client": ["web", "mweb", "android", "tv"]
         }
     },
 }
@@ -1287,12 +1287,12 @@ class YTSource(discord.PCMVolumeTransformer):
             try:
                 return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
             except Exception as e:
-                print(f"⚠️ Primary YouTube extract failed ({e}). Attempting fallback...")
                 try:
                     fallback_opts = opts.copy()
+                    fallback_opts["cookiefile"] = None
                     fallback_opts["extractor_args"] = {
                         "youtube": {
-                            "player_client": ["tv", "android", "ios"]
+                            "player_client": ["mweb", "web", "android"]
                         }
                     }
                     return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
