@@ -1010,7 +1010,7 @@ YTDL_OPTIONS = {
     "js_runtimes": {"node": {}},
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "android_vr"]
+            "player_client": ["web", "android"]
         },
         "youtubepot-bgutilhttp": {
             "base_url": ["http://127.0.0.1:4416"]
