@@ -1007,6 +1007,12 @@ YTDL_OPTIONS = {
     "socket_timeout": 8,
     "retries": 1,
     "extractor_retries": 1,
+    "js_runtimes": {"node": {}},
+    "extractor_args": {
+        "youtubepot-bgutilhttp": {
+            "base_url": ["http://127.0.0.1:4416"]
+        }
+    },
 }
 
 # ─────────────────────────────────────────────
