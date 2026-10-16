@@ -362,9 +362,8 @@ else:
     print(f"ℹ️ {COOKIES_FILE} not found. YouTube streaming will use Chrome TLS impersonation.")
 
 try:
-    from yt_dlp.networking.impersonate import ImpersonateTarget
-    CHROME_TARGET = ImpersonateTarget("chrome")
-    print("🚀 Chrome TLS impersonation target active for direct YouTube extraction.")
+    CHROME_TARGET = None
+    print("ℹ️ Chrome TLS impersonation disabled: using native requests for mobile clients.")
 except Exception as _ite:
     CHROME_TARGET = None
     print(f"⚠️ ImpersonateTarget not available: {_ite}")
