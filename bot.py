@@ -1032,6 +1032,8 @@ YTDL_OPTIONS = {
         }
     },
 }
+if CHROME_TARGET:
+    YTDL_OPTIONS["impersonate"] = CHROME_TARGET
 
 # ─────────────────────────────────────────────
 #                 EMBED HELPERS (MODERN UI)
@@ -1299,6 +1301,8 @@ class YTSource(discord.PCMVolumeTransformer):
                 try:
                     fallback_opts = opts.copy()
                     fallback_opts["cookiefile"] = None
+                    if CHROME_TARGET:
+                        fallback_opts["impersonate"] = CHROME_TARGET
                     fallback_opts["extractor_args"] = {
                         "youtube": {
                             "player_client": ["web", "mweb", "android"]
@@ -2061,6 +2065,8 @@ class MusicBot(commands.Bot):
                             }
                         }
                     }
+                    if CHROME_TARGET:
+                        o["impersonate"] = CHROME_TARGET
                     try:
                         info = yt_dlp.YoutubeDL(o).extract_info(url, download=False)
                         stream_url = info.get("url")
