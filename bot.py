@@ -1,8 +1,18 @@
 import subprocess
 import sys
-import importlib
 import os
+
+if sys.platform == "win32":
+    try:
+        if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import shutil
+import importlib
 import time
 import random
 import asyncio
@@ -1143,15 +1153,30 @@ class YTSource(discord.PCMVolumeTransformer):
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
             selected = None
+            q_lower = query.lower()
             for e in data["entries"]:
                 if not e: continue
                 dur = int(e.get("duration") or 0)
                 url = e.get("url") or e.get("webpage_url") or ""
-                # Filter out YouTube Shorts (duration < 60s or /shorts/ in url)
-                if "/shorts/" in url or (0 < dur < 60):
+                title = (e.get("title") or "").lower()
+                # Filter out YouTube Shorts (duration < 60s or /shorts/ in url or #shorts in title)
+                if "/shorts/" in url or "#shorts" in title or "#short" in title or (0 < dur < 60):
                     continue
+                # Filter out Ads / Promos / Teasers / Trailers / Commercials
+                ad_keywords = ["teaser", "trailer", "promo", "preview", "commercial", "advertisement", "ad video"]
+                if not any(k in q_lower for k in ad_keywords):
+                    if any(k in title for k in ad_keywords):
+                        continue
                 selected = e
                 break
+            if not selected:
+                for e in data["entries"]:
+                    if not e: continue
+                    dur = int(e.get("duration") or 0)
+                    url = e.get("url") or e.get("webpage_url") or ""
+                    if "/shorts/" not in url and dur >= 60:
+                        selected = e
+                        break
             if not selected:
                 selected = data["entries"][0]
             data = selected
@@ -1197,10 +1222,14 @@ class YTSource(discord.PCMVolumeTransformer):
                 if not e: continue
                 dur = int(e.get("duration") or 0)
                 url = e.get("url") or e.get("webpage_url") or ""
-                title = (e.get("title") or "").lower()
                 # Strictly filter out YouTube Shorts (duration < 60s or /shorts/ in url or #shorts in title)
                 if "/shorts/" in url or "#shorts" in title or "#short" in title or (0 < dur < 60):
                     continue
+                # Strictly filter out Ads / Promos / Teasers / Trailers / Commercials
+                ad_keywords = ["teaser", "trailer", "promo", "preview", "commercial", "advertisement", "ad video"]
+                if not any(k in q_lower for k in ad_keywords):
+                    if any(k in title for k in ad_keywords):
+                        continue
                 # Filter out 1 hour / loop / extended unless explicitly requested
                 if not any(k in q_lower for k in ["1 hour", "1hr", "10 hour", "loop", "extended"]):
                     if any(k in title for k in ["1 hour", "10 hour", "10 hrs", "1 hr loop", "[1 hour]"]):
@@ -3013,34 +3042,14 @@ async def play_next(guild: discord.Guild, interaction: Optional[discord.Interact
                 print(f"✅ [Voice Playback Finished] Guild {guild.id} after {elapsed:.1f}s: {track.get('title')}")
             bot.loop.call_soon_threadsafe(lambda: bot.loop.create_task(play_next(guild)))
 
-        # Ensure DAVE E2EE protocol is active and ready before audio starts
+        # Ensure DAVE E2EE session is initialized if protocol version > 0
         conn = getattr(p.voice, "_connection", None)
-        if conn and conn.dave_protocol_version > 0 and not conn.can_encrypt:
-            print(f"⚠️ [DAVE Sync] Session not encrypted (can_encrypt=False) in guild {guild.id}. Re-initializing DAVE MLS...")
+        if conn and getattr(conn, "dave_protocol_version", 0) > 0 and not getattr(conn, "can_encrypt", False):
             try:
-                await conn.reinit_dave_session()
-                for _ in range(15):
-                    if conn.can_encrypt:
-                        break
-                    await asyncio.sleep(0.1)
+                if hasattr(conn, "reinit_dave_session"):
+                    await conn.reinit_dave_session()
             except Exception as d_err:
-                print(f"⚠️ [DAVE Sync] reinit error: {d_err}")
-
-            if not conn.can_encrypt and p.voice.channel:
-                ch = p.voice.channel
-                print(f"🔄 [DAVE Sync] Active listeners present; reconnecting to '{ch.name}' to seal MLS group...")
-                try:
-                    await p.voice.disconnect(force=True)
-                    await asyncio.sleep(0.3)
-                    p.voice = await ch.connect(timeout=15, reconnect=True, self_deaf=True)
-                    for _ in range(20):
-                        new_conn = getattr(p.voice, "_connection", None)
-                        if new_conn and new_conn.can_encrypt:
-                            print(f"✅ [DAVE Sync] Active encryption verified (status={new_conn.dave_session.status if new_conn.dave_session else 'ready'})")
-                            break
-                        await asyncio.sleep(0.1)
-                except Exception as rec_err:
-                    print(f"⚠️ [DAVE Sync] Reconnection error: {rec_err}")
+                pass
 
         p.reset_start_time()
         if p.voice and (p.voice.is_playing() or p.voice.is_paused()):
