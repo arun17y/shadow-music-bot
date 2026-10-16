@@ -341,10 +341,14 @@ if os.path.exists(COOKIES_FILE):
                 continue
             _parts = _ls.split("\t")
             if len(_parts) >= 7:
+                cname = _parts[5]
+                # Strip dynamic rotating cookies that Google invalidates quickly
+                if "PSIDTS" in cname or "SIDCC" in cname:
+                    continue
                 if _parts[0].startswith("."):
                     _parts[1] = "TRUE"
                 _clean_lines.append("\t".join(_parts) + "\n")
-                if any(k in _parts[5] for k in ("LOGIN_INFO", "SID", "VISITOR_INFO1_LIVE", "SAPISID", "SSID", "HSID", "PREF")):
+                if any(k in cname for k in ("LOGIN_INFO", "SID", "VISITOR_INFO1_LIVE", "SAPISID", "SSID", "HSID", "PREF")):
                     has_yt_login = True
         with open(COOKIES_FILE, "w", encoding="utf-8") as _cf:
             _cf.writelines(_clean_lines)
@@ -1322,8 +1326,32 @@ class YTSource(discord.PCMVolumeTransformer):
                     }
                     return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
                 except Exception as fb_err:
-                    print(f"❌ YouTube fallback failed ({fb_err})")
-                    raise e
+                    print(f"⚠️ Direct YouTube blocked ({fb_err}). Engaging high-res audio mirror...")
+
+                # Resilient audio stream fallback: search mirror for the exact track
+                try:
+                    raw_title = track_title or ""
+                    clean_title = raw_title.split("|")[0]
+                    clean_title = re.sub(r'(?i)(\[.*?\]|\(.*?\)|official video|music video|lyric video|official audio|full song|video song|song|lyrics|audio)', '', clean_title).strip()
+                    mirror_query = clean_title if clean_title else raw_title
+                    if mirror_query:
+                        sc_opts = {
+                            "format": "bestaudio/best",
+                            "noplaylist": True,
+                            "quiet": True,
+                            "no_warnings": True,
+                            "socket_timeout": 10,
+                            "ignoreerrors": True
+                        }
+                        sc_data = yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{mirror_query}", download=False)
+                        for entry in sc_data.get("entries", []):
+                            if entry and entry.get("url"):
+                                print(f"✅ Transparently resolved audio stream via mirror: {entry.get('title')}")
+                                return entry
+                except Exception as mirror_err:
+                    print(f"⚠️ Audio mirror resolution failed: {mirror_err}")
+
+                raise e
 
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
