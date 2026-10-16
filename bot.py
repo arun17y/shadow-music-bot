@@ -1007,7 +1007,8 @@ YTDL_OPTIONS = {
     "socket_timeout": 8,
     "retries": 1,
     "extractor_retries": 1,
-    "js_runtimes": {"deno": {}},
+    "js_runtimes": {"deno": {}, "node": {}},
+    "remote_components": ["ejs:github", "ejs:npm"],
     "extractor_args": {
         "youtube": {
             "player_client": ["web", "android"]
@@ -2111,6 +2112,13 @@ class MusicBot(commands.Bot):
                 except Exception:
                     pot_ok = False
 
+                deno_status = "unavailable"
+                try:
+                    p_deno = subprocess.run(["deno", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=1.5)
+                    deno_status = p_deno.stdout.strip().split("\n")[0] if p_deno.returncode == 0 else f"err: {p_deno.stderr.strip()[:60]}"
+                except Exception as de:
+                    deno_status = f"not found ({de})"
+
                 return web.json_response({
                     "status": "ok",
                     "guilds_count": len(self.guilds),
@@ -2119,6 +2127,7 @@ class MusicBot(commands.Bot):
                     "active_players": player_list,
                     "opus_loaded": discord.opus.is_loaded(),
                     "pot_provider_active": pot_ok,
+                    "deno_status": deno_status,
                     "dave_available": getattr(discord.voice_client, "has_dave", False)
                 })
 
