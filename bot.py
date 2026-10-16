@@ -996,7 +996,7 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "18/bestaudio/best/b",
+    "format": "bestaudio/18/best/b",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
@@ -1004,12 +1004,17 @@ YTDL_OPTIONS = {
     "no_warnings": True,
     "default_search": "ytsearch",
     "cookiefile": None,
-    "socket_timeout": 8,
+    "socket_timeout": 10,
     "retries": 1,
     "extractor_retries": 1,
+    "js_runtimes": {"deno": {}, "node": {}},
+    "remote_components": ["ejs:github", "ejs:npm"],
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "android_vr", "visionos"]
+            "player_client": ["web", "mweb", "android_vr", "android"]
+        },
+        "youtubepot-bgutilhttp": {
+            "base_url": ["http://127.0.0.1:4416"]
         }
     },
 }
@@ -1263,6 +1268,9 @@ class YTSource(discord.PCMVolumeTransformer):
                     fallback_opts["extractor_args"] = {
                         "youtube": {
                             "player_client": ["android_vr", "android"]
+                        },
+                        "youtubepot-bgutilhttp": {
+                            "base_url": ["http://127.0.0.1:4416"]
                         }
                     }
                     return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
