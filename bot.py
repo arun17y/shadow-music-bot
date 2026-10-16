@@ -1038,7 +1038,7 @@ YTDL_OPTIONS = {
     "extractor_retries": 2,
     "extractor_args": {
         "youtube": {
-            "player_client": ["web", "mweb", "android"]
+            "player_client": ["android", "ios"]
         },
         "youtubepot-bgutilhttp": {
             "base_url": ["http://127.0.0.1:4416"]
@@ -1325,68 +1325,62 @@ class YTSource(discord.PCMVolumeTransformer):
         opts["format"] = "18/bestaudio/best/b"
         opts["cookiefile"] = COOKIE_ARG
         opts["socket_timeout"] = 12
+        opts["extractor_args"] = {
+            "youtube": {
+                "player_client": ["android", "ios"]
+            },
+            "youtubepot-bgutilhttp": {
+                "base_url": ["http://127.0.0.1:4416"]
+            }
+        }
 
         def run():
+            # 1. Primary: Android/iOS client with configured options
             try:
                 return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
-            except Exception as e:
-                try:
-                    fallback_opts = opts.copy()
-                    fallback_opts["cookiefile"] = None
-                    if CHROME_TARGET:
-                        fallback_opts["impersonate"] = CHROME_TARGET
-                    fallback_opts["extractor_args"] = {
-                        "youtube": {
-                            "player_client": ["web", "mweb", "android"]
-                        },
-                        "youtubepot-bgutilhttp": {
-                            "base_url": ["http://127.0.0.1:4416"]
-                        }
+            except Exception as e1:
+                print(f"⚠️ Primary direct YouTube extraction failed ({e1}). Trying clean Android/iOS without cookies...")
+
+            # 2. Fallback: Pure Android/iOS client without cookies (bypasses bot check on datacenter IPs)
+            try:
+                fb_opts = opts.copy()
+                fb_opts["cookiefile"] = None
+                fb_opts["extractor_args"] = {
+                    "youtube": {
+                        "player_client": ["android", "ios"]
                     }
-                    return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
-                except Exception as fb_err:
-                    print(f"⚠️ Direct YouTube blocked ({fb_err}). Engaging high-res audio mirror...")
+                }
+                return yt_dlp.YoutubeDL(fb_opts).extract_info(url, download=False)
+            except Exception as e2:
+                print(f"⚠️ Clean Android/iOS fallback failed ({e2}). Trying iOS + Android Creator client...")
 
-                # Resilient audio stream fallback: search mirror for the exact track
-                try:
-                    raw_title = track_title or ""
-                    if not raw_title and ("youtube.com" in url or "youtu.be" in url):
-                        try:
-                            import urllib.request, json, urllib.parse
-                            oembed_url = f"https://www.youtube.com/oembed?url={urllib.parse.quote(url)}&format=json"
-                            req = urllib.request.Request(oembed_url, headers={"User-Agent": "Mozilla/5.0"})
-                            with urllib.request.urlopen(req, timeout=4) as resp:
-                                oe = json.loads(resp.read().decode())
-                                raw_title = oe.get("title") or ""
-                        except Exception:
-                            pass
-                        if not raw_title:
-                            try:
-                                flat_info = yt_dlp.YoutubeDL({"extract_flat": True, "quiet": True}).extract_info(url, download=False)
-                                raw_title = flat_info.get("title") or ""
-                            except Exception:
-                                pass
-                    clean_title = raw_title.split("|")[0]
-                    clean_title = re.sub(r'(?i)(\[.*?\]|\(.*?\)|official video|music video|lyric video|official audio|full song|video song|song|lyrics|audio)', '', clean_title).strip()
-                    mirror_query = clean_title if clean_title else raw_title
-                    if mirror_query:
-                        sc_opts = {
-                            "format": "bestaudio/best",
-                            "noplaylist": True,
-                            "quiet": True,
-                            "no_warnings": True,
-                            "socket_timeout": 10,
-                            "ignoreerrors": True
-                        }
-                        sc_data = yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{mirror_query}", download=False)
-                        for entry in sc_data.get("entries", []):
-                            if entry and entry.get("url"):
-                                print(f"✅ Transparently resolved audio stream via mirror: {entry.get('title')}")
-                                return entry
-                except Exception as mirror_err:
-                    print(f"⚠️ Audio mirror resolution failed: {mirror_err}")
+            # 3. Fallback: Alternate mobile clients (iOS / Android Creator)
+            try:
+                fb_opts2 = opts.copy()
+                fb_opts2["cookiefile"] = None
+                fb_opts2["extractor_args"] = {
+                    "youtube": {
+                        "player_client": ["ios", "android_creator"]
+                    }
+                }
+                return yt_dlp.YoutubeDL(fb_opts2).extract_info(url, download=False)
+            except Exception as e3:
+                print(f"⚠️ Mobile client fallback failed ({e3}). Trying generic best audio...")
 
-                raise e
+            # 4. Final YouTube fallback: format bestaudio/best with android client
+            try:
+                fb_opts3 = opts.copy()
+                fb_opts3["format"] = "bestaudio/best"
+                fb_opts3["cookiefile"] = None
+                fb_opts3["extractor_args"] = {
+                    "youtube": {
+                        "player_client": ["android"]
+                    }
+                }
+                return yt_dlp.YoutubeDL(fb_opts3).extract_info(url, download=False)
+            except Exception as e4:
+                print(f"❌ All direct YouTube audio stream extractions failed: {e4}")
+                raise e1
 
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
