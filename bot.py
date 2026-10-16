@@ -1019,7 +1019,10 @@ YTDL_OPTIONS = {
     "extractor_retries": 2,
     "extractor_args": {
         "youtube": {
-            "player_client": ["web", "mweb", "android", "tv"]
+            "player_client": ["android", "ios", "mweb", "web"]
+        },
+        "youtubepot-bgutilhttp": {
+            "base_url": ["http://127.0.0.1:4416"]
         }
     },
 }
@@ -1292,7 +1295,10 @@ class YTSource(discord.PCMVolumeTransformer):
                     fallback_opts["cookiefile"] = None
                     fallback_opts["extractor_args"] = {
                         "youtube": {
-                            "player_client": ["mweb", "web", "android"]
+                            "player_client": ["android", "ios", "web"]
+                        },
+                        "youtubepot-bgutilhttp": {
+                            "base_url": ["http://127.0.0.1:4416"]
                         }
                     }
                     return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
@@ -2043,6 +2049,9 @@ class MusicBot(commands.Bot):
                         "extractor_args": {
                             "youtube": {
                                 "player_client": clist
+                            },
+                            "youtubepot-bgutilhttp": {
+                                "base_url": ["http://127.0.0.1:4416"]
                             }
                         }
                     }
