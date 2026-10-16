@@ -342,9 +342,6 @@ if os.path.exists(COOKIES_FILE):
             _parts = _ls.split("\t")
             if len(_parts) >= 7:
                 cname = _parts[5]
-                # Strip dynamic rotating cookies that Google invalidates quickly
-                if "PSIDTS" in cname or "SIDCC" in cname:
-                    continue
                 if _parts[0].startswith("."):
                     _parts[1] = "TRUE"
                 _clean_lines.append("\t".join(_parts) + "\n")
