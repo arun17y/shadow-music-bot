@@ -1013,13 +1013,14 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": COOKIE_ARG,
+    "cookiefile": None,
     "socket_timeout": 10,
-    "retries": 2,
-    "extractor_retries": 2,
+    "retries": 1,
+    "extractor_retries": 1,
     "extractor_args": {
         "youtube": {
-            "player_client": ["tv", "ios", "android", "web"]
+            "player_client": ["android", "web_embedded"],
+            "player_skip": ["webpage"]
         }
     },
 }
@@ -1280,8 +1281,8 @@ class YTSource(discord.PCMVolumeTransformer):
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = False
         opts["format"] = "18/bestaudio/best/b"
-        opts["cookiefile"] = COOKIE_ARG
-        opts["socket_timeout"] = 12
+        opts["cookiefile"] = None
+        opts["socket_timeout"] = 10
 
         def run():
             try:
@@ -1292,7 +1293,8 @@ class YTSource(discord.PCMVolumeTransformer):
                     fallback_opts = opts.copy()
                     fallback_opts["extractor_args"] = {
                         "youtube": {
-                            "player_client": ["tv", "android", "ios"]
+                            "player_client": ["android", "tv"],
+                            "player_skip": ["webpage"]
                         }
                     }
                     return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
