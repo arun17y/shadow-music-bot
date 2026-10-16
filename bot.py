@@ -251,6 +251,11 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import yt_dlp
+try:
+    import yt_dlp_plugins.extractor.getpot_bgutil_http
+    print("✅ yt-dlp bgutil:http PO Token provider registered.")
+except Exception as _pot_e:
+    print(f"⚠️ Failed to register yt-dlp POT provider: {_pot_e}")
 import aiohttp
 import psutil
 
@@ -1019,7 +1024,7 @@ YTDL_OPTIONS = {
     "extractor_retries": 2,
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "ios", "mweb", "web"]
+            "player_client": ["web", "mweb", "android"]
         },
         "youtubepot-bgutilhttp": {
             "base_url": ["http://127.0.0.1:4416"]
@@ -1295,7 +1300,7 @@ class YTSource(discord.PCMVolumeTransformer):
                     fallback_opts["cookiefile"] = None
                     fallback_opts["extractor_args"] = {
                         "youtube": {
-                            "player_client": ["android", "ios", "web"]
+                            "player_client": ["web", "mweb", "android"]
                         },
                         "youtubepot-bgutilhttp": {
                             "base_url": ["http://127.0.0.1:4416"]
