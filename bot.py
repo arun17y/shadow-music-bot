@@ -2811,7 +2811,7 @@ async def on_guild_join(guild: discord.Guild):
             pass
 
 # Inactivity and Empty Voice Channel Auto-Disconnect Task Loop (with 24/7 Watchdog)
-@tasks.loop(seconds=25)
+@tasks.loop(seconds=60)
 async def check_voice_channels():
     # 1. 24/7 Watchdog: Enforce presence for all guilds configured with stay_247 = 1
     try:
@@ -2826,9 +2826,9 @@ async def check_voice_channels():
                 p.stay_247 = True
 
                 existing_vc = guild.voice_client
-                if existing_vc and existing_vc.is_connected():
+                if existing_vc is not None:
                     p.voice = existing_vc
-                    if existing_vc.channel.id != vc_id:
+                    if existing_vc.is_connected() and existing_vc.channel and existing_vc.channel.id != vc_id:
                         ch = guild.get_channel(vc_id)
                         if ch and isinstance(ch, (discord.VoiceChannel, discord.StageChannel)):
                             try:
@@ -2837,7 +2837,7 @@ async def check_voice_channels():
                                 pass
                     continue
 
-                if getattr(p, "is_connecting", False):
+                if getattr(p, "is_connecting", False) or (p.voice and p.voice.is_connected()):
                     continue
 
                 ch = guild.get_channel(vc_id)
