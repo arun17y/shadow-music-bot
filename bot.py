@@ -2076,6 +2076,22 @@ class MusicBot(commands.Bot):
 
                 return web.json_response({"url": url, "results": results})
 
+            async def test_pot_api(request):
+                async with aiohttp.ClientSession() as s:
+                    ping = None
+                    try:
+                        async with s.get("http://127.0.0.1:4416/ping", timeout=3.0) as r:
+                            ping = await r.json()
+                    except Exception as pe:
+                        ping = str(pe)
+                    get_pot = None
+                    try:
+                        async with s.post("http://127.0.0.1:4416/get_pot", json={"content_binding": "DLlXI1-_o7Y"}, timeout=5.0) as r:
+                            get_pot = await r.text()
+                    except Exception as ge:
+                        get_pot = str(ge)
+                    return web.json_response({"ping": ping, "get_pot": get_pot})
+
             async def test_stream_view(request):
                 url = request.query.get("url") or request.query.get("q") or "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
                 try:
@@ -2625,6 +2641,7 @@ class MusicBot(commands.Bot):
             app.router.add_get("/api/test_extract", test_extract_view)
             app.router.add_get("/api/test_stream", test_stream_view)
             app.router.add_get("/api/probe_clients", probe_clients_view)
+            app.router.add_get("/api/test_pot", test_pot_api)
             app.router.add_get("/api/formats", formats_view)
             app.router.add_get("/api/test_pcm", test_pcm_view)
             app.router.add_get("/api/diagnose", diagnose_view)
