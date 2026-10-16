@@ -251,12 +251,6 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import yt_dlp
-import yt_dlp.plugins
-try:
-    yt_dlp.plugins.load_all_plugins()
-    print("✅ yt-dlp plugins loaded successfully.")
-except Exception as _pl_err:
-    print(f"⚠️ Failed to load yt-dlp plugins: {_pl_err}")
 import aiohttp
 import psutil
 
@@ -318,15 +312,6 @@ if os.path.exists(CONFIG_FILE) and BOT_TOKEN:
         pass
 
 
-env_cookies = os.environ.get("YOUTUBE_COOKIES") or os.environ.get("COOKIES_TEXT")
-if env_cookies:
-    try:
-        with open(COOKIES_FILE, "w", encoding="utf-8") as _ef:
-            _ef.write(env_cookies)
-        print("✅ Synced cookies from environment variable to cookies.txt")
-    except Exception as _ece:
-        print(f"⚠️ Failed to write environment cookies: {_ece}")
-
 COOKIE_ARG = None
 if os.path.exists(COOKIES_FILE):
     try:
@@ -341,11 +326,10 @@ if os.path.exists(COOKIES_FILE):
                 continue
             _parts = _ls.split("\t")
             if len(_parts) >= 7:
-                cname = _parts[5]
                 if _parts[0].startswith("."):
                     _parts[1] = "TRUE"
                 _clean_lines.append("\t".join(_parts) + "\n")
-                if any(k in cname for k in ("LOGIN_INFO", "SID", "VISITOR_INFO1_LIVE", "SAPISID", "SSID", "HSID", "PREF")):
+                if any(k in _parts[5] for k in ["LOGIN_INFO", "__Secure-3PSID", "__Secure-1PSID", "SID"]):
                     has_yt_login = True
         with open(COOKIES_FILE, "w", encoding="utf-8") as _cf:
             _cf.writelines(_clean_lines)
@@ -354,7 +338,7 @@ if os.path.exists(COOKIES_FILE):
             print(f"✅ Loaded verified YouTube account cookies from {COOKIES_FILE}")
         else:
             COOKIE_ARG = None
-            print(f"ℹ️ {COOKIES_FILE} does not contain valid YouTube session cookies. Using Chrome TLS impersonation.")
+            print(f"ℹ️ {COOKIES_FILE} does not contain authenticated YouTube session cookies. Using Chrome TLS impersonation.")
     except Exception as _ce:
         print(f"⚠️ Error sanitizing {COOKIES_FILE}: {_ce}")
         COOKIE_ARG = None
@@ -362,8 +346,9 @@ else:
     print(f"ℹ️ {COOKIES_FILE} not found. YouTube streaming will use Chrome TLS impersonation.")
 
 try:
-    CHROME_TARGET = None
-    print("ℹ️ Chrome TLS impersonation disabled: using native requests for mobile clients.")
+    from yt_dlp.networking.impersonate import ImpersonateTarget
+    CHROME_TARGET = ImpersonateTarget("chrome")
+    print("🚀 Chrome TLS impersonation target active for direct YouTube extraction.")
 except Exception as _ite:
     CHROME_TARGET = None
     print(f"⚠️ ImpersonateTarget not available: {_ite}")
@@ -1021,25 +1006,20 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "bestaudio/best",
+    "format": "bestaudio/18/best/b",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": COOKIES_FILE if (os.path.exists(COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 50) else None,
-    "socket_timeout": 12,
-    "retries": 3,
-    "extractor_retries": 3,
-    "js_runtimes": {"deno": {}},
+    "cookiefile": COOKIE_ARG,
+    "socket_timeout": 10,
+    "retries": 2,
+    "extractor_retries": 2,
     "extractor_args": {
         "youtube": {
-            "player_client": ["tvhtml5", "web_embedded", "web", "mweb", "android", "ios"],
-            "fetch_pot": ["always"]
-        },
-        "youtubepot-bgutilhttp": {
-            "base_url": ["http://127.0.0.1:4416"]
+            "player_client": ["tv", "ios", "android", "web"]
         }
     },
 }
@@ -1160,7 +1140,7 @@ class YTSource(discord.PCMVolumeTransformer):
         opts["extract_flat"] = "in_playlist"
         opts["socket_timeout"] = 8
         is_search = not query.startswith("http")
-        q = f"ytsearch10:{query}" if is_search else query
+        q = f"ytsearch5:{query}" if is_search else query
             
         def run():
             return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
@@ -1218,31 +1198,12 @@ class YTSource(discord.PCMVolumeTransformer):
             q = query
             is_search = False
         elif is_search:
-            q = f"ytsearch10:{query}"
+            q = f"ytsearch5:{query}"
         else:
             q = query
         
         def run():
-            try:
-                return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
-            except Exception as e:
-                if not is_search and ("youtube.com" in q or "youtu.be" in q):
-                    try:
-                        import urllib.request, json, urllib.parse
-                        oembed_url = f"https://www.youtube.com/oembed?url={urllib.parse.quote(q)}&format=json"
-                        req = urllib.request.Request(oembed_url, headers={"User-Agent": "Mozilla/5.0"})
-                        with urllib.request.urlopen(req, timeout=5) as resp:
-                            oe = json.loads(resp.read().decode())
-                            return {
-                                "title": oe.get("title", "Unknown Track"),
-                                "url": q,
-                                "webpage_url": q,
-                                "duration": 0,
-                                "uploader": oe.get("author_name", "YouTube")
-                            }
-                    except Exception:
-                        pass
-                raise e
+            return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
 
         data = await loop.run_in_executor(None, run)
         if not data:
@@ -1318,70 +1279,26 @@ class YTSource(discord.PCMVolumeTransformer):
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = False
-        opts["format"] = "bestaudio/best"
+        opts["format"] = "18/bestaudio/best/b"
+        opts["cookiefile"] = COOKIE_ARG
         opts["socket_timeout"] = 12
 
         def run():
-            last_err = None
-            cookie_path = COOKIES_FILE if (os.path.exists(COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 50) else None
-
-            # Tier 0: OAuth2 Google TV Auth (Permanent bypass for datacenter IPs if active)
-            if os.path.exists("oauth2.json") or os.environ.get("YOUTUBE_OAUTH2_TOKEN"):
+            try:
+                return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
+            except Exception as e:
+                print(f"⚠️ Primary YouTube extract failed ({e}). Attempting fallback...")
                 try:
-                    t0 = opts.copy()
-                    t0["username"] = "oauth2"
-                    t0["password"] = ""
-                    t0["cookiefile"] = None
-                    return yt_dlp.YoutubeDL(t0).extract_info(url, download=False)
-                except Exception as e:
-                    last_err = e
-                    print(f"⚠️ OAuth2 extraction failed ({e}). Trying cookie & POT tiers...")
-
-            # Tier 1: Cookies + PO Token (tvhtml5, web_embedded, web, mweb)
-            try:
-                t1 = opts.copy()
-                if cookie_path:
-                    t1["cookiefile"] = cookie_path
-                t1["extractor_args"] = {
-                    "youtube": {
-                        "player_client": ["visionos", "ios", "android", "tvhtml5", "web_embedded", "web", "mweb"],
-                        "fetch_pot": ["always"]
-                    },
-                    "youtubepot-bgutilhttp": {
-                        "base_url": ["http://127.0.0.1:4416"]
+                    fallback_opts = opts.copy()
+                    fallback_opts["extractor_args"] = {
+                        "youtube": {
+                            "player_client": ["tv", "android", "ios"]
+                        }
                     }
-                }
-                return yt_dlp.YoutubeDL(t1).extract_info(url, download=False)
-            except Exception as e:
-                last_err = e
-                print(f"⚠️ Tier 1 (tvhtml5+web+pot) failed ({e}). Trying mobile clients...")
-
-            # Tier 2: Mobile / Embedded clients with cookies
-            try:
-                t2 = opts.copy()
-                if cookie_path:
-                    t2["cookiefile"] = cookie_path
-                t2["extractor_args"] = {
-                    "youtube": {
-                        "player_client": ["android", "ios", "visionos"]
-                    }
-                }
-                return yt_dlp.YoutubeDL(t2).extract_info(url, download=False)
-            except Exception as e:
-                last_err = e
-                print(f"⚠️ Tier 2 (android+ios+visionos) failed ({e}). Trying pure yt-dlp default...")
-
-            # Tier 3: Pure yt-dlp default with cookies
-            try:
-                t3 = opts.copy()
-                if cookie_path:
-                    t3["cookiefile"] = cookie_path
-                t3.pop("extractor_args", None)
-                return yt_dlp.YoutubeDL(t3).extract_info(url, download=False)
-            except Exception as e:
-                last_err = e
-                print(f"❌ All direct YouTube audio stream extractions failed: {e}")
-                raise last_err
+                    return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
+                except Exception as fb_err:
+                    print(f"❌ YouTube fallback failed ({fb_err})")
+                    raise e
 
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
@@ -2100,124 +2017,10 @@ class MusicBot(commands.Bot):
                         "traceback": traceback.format_exc()
                     }, status=500)
 
-            async def probe_clients_view(request):
-                url = request.query.get("url") or "https://www.youtube.com/watch?v=DLlXI1-_o7Y"
-                clients_to_test = [
-                    ("tv_no_cookie", ["tv"], False),
-                    ("tv_embedded_no_cookie", ["tv_embedded"], False),
-                    ("android_no_cookie", ["android"], False),
-                    ("ios_no_cookie", ["ios"], False),
-                    ("web_no_cookie", ["web"], False),
-                    ("mweb_no_cookie", ["mweb"], False),
-                    ("web_with_cookie", ["web"], True),
-                    ("android_with_cookie", ["android"], True),
-                    ("tv_with_cookie", ["tv"], True),
-                ]
-                results = {}
-                def test_c(clist, use_ck):
-                    o = {
-                        "format": "bestaudio/18/best/b",
-                        "noplaylist": True,
-                        "quiet": True,
-                        "no_warnings": True,
-                        "socket_timeout": 8,
-                        "retries": 1,
-                        "cookiefile": COOKIE_ARG if use_ck else None,
-                        "extractor_args": {
-                            "youtube": {
-                                "player_client": clist
-                            },
-                            "youtubepot-bgutilhttp": {
-                                "base_url": ["http://127.0.0.1:4416"]
-                            }
-                        }
-                    }
-                    if CHROME_TARGET:
-                        o["impersonate"] = CHROME_TARGET
-                    try:
-                        info = yt_dlp.YoutubeDL(o).extract_info(url, download=False)
-                        stream_url = info.get("url")
-                        return {
-                            "ok": True,
-                            "has_stream_url": bool(stream_url),
-                            "title": info.get("title"),
-                            "format_id": info.get("format_id")
-                        }
-                    except Exception as e:
-                        return {"ok": False, "error": str(e)[:160]}
-
-                for name, clist, use_ck in clients_to_test:
-                    res = await asyncio.get_event_loop().run_in_executor(None, test_c, clist, use_ck)
-                    results[name] = res
-                    if res.get("ok") and res.get("has_stream_url"):
-                        results["winner"] = name
-                        break
-
-                return web.json_response({"url": url, "results": results})
-
-            async def test_pot_api(request):
-                async with aiohttp.ClientSession() as s:
-                    ping = None
-                    try:
-                        async with s.get("http://127.0.0.1:4416/ping", timeout=3.0) as r:
-                            ping = await r.json()
-                    except Exception as pe:
-                        ping = str(pe)
-                    get_pot = None
-                    try:
-                        async with s.post("http://127.0.0.1:4416/get_pot", json={"content_binding": "DLlXI1-_o7Y"}, timeout=5.0) as r:
-                            get_pot = await r.text()
-                    except Exception as ge:
-                        get_pot = str(ge)
-                    return web.json_response({"ping": ping, "get_pot": get_pot})
-
-            async def debug_ytdlp_view(request):
-                url = request.query.get("url") or "https://www.youtube.com/watch?v=DLlXI1-_o7Y"
-                client = request.query.get("client") or "web"
-                use_pot = request.query.get("pot", "1") == "1"
-                skip_webpage = request.query.get("skip_webpage") == "1"
-                import io
-                log_stream = io.StringIO()
-                class DebugLogger:
-                    def debug(self, msg): log_stream.write(f"[DEBUG] {msg}\n")
-                    def info(self, msg): log_stream.write(f"[INFO] {msg}\n")
-                    def warning(self, msg): log_stream.write(f"[WARN] {msg}\n")
-                    def error(self, msg): log_stream.write(f"[ERROR] {msg}\n")
-                    def trace(self, msg): log_stream.write(f"[TRACE] {msg}\n")
-                
-                ext_args = {
-                    "youtube": {
-                        "player_client": [client],
-                    }
-                }
-                if use_pot:
-                    ext_args["youtube"]["fetch_pot"] = ["always"]
-                    ext_args["youtube"]["pot_trace"] = ["true"]
-                    ext_args["youtubepot-bgutilhttp"] = {"base_url": ["http://127.0.0.1:4416"]}
-
-                if skip_webpage:
-                    ext_args["youtube"]["player_skip"] = ["webpage"]
-
-                o = {
-                    "format": "18/bestaudio/best/b",
-                    "cookiefile": COOKIES_FILE if (os.path.exists(COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 50) else None,
-                    "logger": DebugLogger(),
-                    "verbose": True,
-                    "extractor_args": ext_args
-                }
-                err = None
-                info = None
-                try:
-                    info = await asyncio.get_event_loop().run_in_executor(None, lambda: yt_dlp.YoutubeDL(o).extract_info(url, download=False))
-                except Exception as e:
-                    err = str(e)
-                res = f"ERROR: {err}\n\nHAS_URL: {bool(info.get('url')) if info else False}\nSTREAM_URL: {info.get('url') if info else None}\n\nLOGS:\n{log_stream.getvalue()}"
-                return web.Response(text=res, content_type="text/plain")
-
             async def test_stream_view(request):
                 url = request.query.get("url") or request.query.get("q") or "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
                 try:
-                    src = await YTSource.stream(url, asyncio.get_event_loop(), track_title=request.query.get("title"))
+                    src = await YTSource.stream(url, asyncio.get_event_loop())
                     stream_url = src.data.get("url") if src.data else None
                     title = src.data.get("title") if src.data else "Unknown"
                     domain = stream_url.split("/")[2] if stream_url else None
@@ -2755,123 +2558,19 @@ class MusicBot(commands.Bot):
                 except Exception as e:
                     return web.json_response({"status": "error", "error": str(e)}, status=500)
 
-            async def upload_cookies_api(request):
-                try:
-                    data = {}
-                    try:
-                        data = await request.post()
-                    except Exception:
-                        pass
-                    text = data.get("cookies") if data else None
-                    if not text:
-                        text = await request.text()
-                    if not text or not text.strip():
-                        return web.json_response({"status": "error", "error": "No cookies provided in body"}, status=400)
-                    with open(COOKIES_FILE, "w", encoding="utf-8") as f:
-                        f.write(text)
-                    global COOKIE_ARG
-                    COOKIE_ARG = COOKIES_FILE
-                    YTDL_OPTIONS["cookiefile"] = COOKIE_ARG
-                    return web.json_response({"status": "ok", "message": "Cookies saved and activated for yt-dlp in real time"})
-                except Exception as ex:
-                    return web.json_response({"status": "error", "error": str(ex)}, status=500)
-
-            async def auth_view(request):
-                import urllib.request, json
-                try:
-                    if os.path.exists("oauth2.json"):
-                        try:
-                            with open("oauth2.json", "r", encoding="utf-8") as f:
-                                tok = json.load(f)
-                            if tok and "access_token" in tok:
-                                return web.Response(text="""<!DOCTYPE html><html><body style="background:#0f1117; color:#57F287; font-family:sans-serif; text-align:center; padding-top:60px;"><h1>✅ YouTube OAuth2 is already active!</h1><p style="color:#aaa;">Render server has verified authorization. YouTube audio will stream without restrictions.</p></body></html>""", content_type="text/html")
-                        except Exception:
-                            pass
-
-                    _cid = '861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com'
-                    _sec = 'SboVhoG9s0rNafixCSGGKXAT'
-                    req = urllib.request.Request(
-                        'https://www.youtube.com/o/oauth2/device/code',
-                        data=json.dumps({
-                            'client_id': _cid,
-                            'scope': 'https://gdata.youtube.com https://www.googleapis.com/auth/youtube',
-                            'device_id': 'f7d2a8b3c9e102948571628394059681',
-                            'device_model': 'ytlr::'
-                        }).encode(),
-                        headers={'Content-Type': 'application/json'}
-                    )
-                    with urllib.request.urlopen(req, timeout=8) as resp:
-                        cdata = json.loads(resp.read().decode())
-                    
-                    device_code = cdata.get("device_code")
-                    user_code = cdata.get("user_code")
-                    verification_url = cdata.get("verification_url", "https://www.google.com/device")
-                    interval = int(cdata.get("interval", 5))
-
-                    async def poll_token():
-                        for _ in range(60):
-                            await asyncio.sleep(interval)
-                            try:
-                                preq = urllib.request.Request(
-                                    'https://www.youtube.com/o/oauth2/token',
-                                    data=json.dumps({
-                                        'client_id': _cid,
-                                        'client_secret': _sec,
-                                        'code': device_code,
-                                        'grant_type': 'urn:ietf:params:oauth:grant-type:device_code'
-                                    }).encode(),
-                                    headers={'Content-Type': 'application/json'}
-                                )
-                                with urllib.request.urlopen(preq, timeout=5) as presp:
-                                    tdata = json.loads(presp.read().decode())
-                                if "access_token" in tdata:
-                                    tdata["expires"] = datetime.now(timezone.utc).timestamp() + tdata.get("expires_in", 3600)
-                                    with open("oauth2.json", "w", encoding="utf-8") as f:
-                                        json.dump(tdata, f, indent=2)
-                                    print("✅ YouTube OAuth2 successfully authenticated and saved to oauth2.json!")
-                                    break
-                            except Exception:
-                                pass
-
-                    asyncio.create_task(poll_token())
-
-                    html = f"""<!DOCTYPE html>
-<html>
-<head><title>YouTube Cloud Authorization</title></head>
-<body style="background:#0f1117; color:#fff; font-family:sans-serif; text-align:center; padding-top:60px;">
-    <h1>🔑 YouTube Cloud Authorization</h1>
-    <p style="color:#aaa;">To enable 24/7 uninterrupted high-quality YouTube playback on Render:</p>
-    <div style="background:#1e222d; padding:25px 40px; display:inline-block; border-radius:12px; margin:20px; border:1px solid #2e3343;">
-        <p style="font-size:18px; margin:5px;">Step 1: Open <a href="{verification_url}" target="_blank" style="color:#5865F2; font-weight:bold;">{verification_url}</a></p>
-        <p style="font-size:32px; font-weight:bold; letter-spacing:4px; color:#57F287; margin:20px 0;">{user_code}</p>
-        <p style="font-size:15px; color:#ddd;">Step 2: Enter the code above and click Allow.</p>
-    </div>
-    <p style="color:#888; font-size:14px;">The bot will automatically capture the token within 5 seconds of confirmation.</p>
-</body>
-</html>"""
-                    return web.Response(text=html, content_type="text/html")
-                except Exception as ex:
-                    return web.json_response({"status": "error", "error": str(ex)}, status=500)
-
             app.router.add_get("/", root_view)
             app.router.add_get("/api/health", health_check)
             app.router.add_get("/health", health_check)
-            app.router.add_get("/api/auth", auth_view)
-            app.router.add_get("/auth", auth_view)
             app.router.add_get("/api/stats", stats_api)
             app.router.add_get("/api/logs", logs_view)
             app.router.add_get("/api/test_extract", test_extract_view)
             app.router.add_get("/api/test_stream", test_stream_view)
-            app.router.add_get("/api/probe_clients", probe_clients_view)
-            app.router.add_get("/api/test_pot", test_pot_api)
-            app.router.add_get("/api/debug_ytdlp", debug_ytdlp_view)
             app.router.add_get("/api/formats", formats_view)
             app.router.add_get("/api/test_pcm", test_pcm_view)
             app.router.add_get("/api/diagnose", diagnose_view)
             app.router.add_get("/api/test_play", test_play_view)
             app.router.add_get("/api/sync_commands", sync_commands_api)
             app.router.add_post("/api/sync_commands", sync_commands_api)
-            app.router.add_post("/api/upload_cookies", upload_cookies_api)
 
             port = int(os.environ.get("PORT", 3005))
             runner = web.AppRunner(app)
@@ -2972,106 +2671,6 @@ async def cmd_sync(ctx: commands.Context):
         await msg.edit(content=f"✅ Purged duplicates! Single clean global slash tree active with **{len(synced)}** unique commands.")
     except Exception as e:
         await msg.edit(content=f"⚠️ Sync error: {e}")
-
-@bot.command(name="setcookies", description="Update YouTube cookies dynamically")
-async def cmd_setcookies(ctx: commands.Context, *, cookie_content: str = None):
-    if OWNER_IDS and ctx.author.id not in OWNER_IDS:
-        return await ctx.send("❌ Only bot owner can update YouTube cookies.")
-    raw_text = cookie_content or ""
-    if ctx.message.attachments:
-        att = ctx.message.attachments[0]
-        try:
-            raw_text = (await att.read()).decode("utf-8", errors="ignore")
-        except Exception as e:
-            return await ctx.send(f"❌ Failed to read attached file: {e}")
-    if not raw_text.strip():
-        return await ctx.send("ℹ️ Send `.setcookies` with text or attach a `cookies.txt` file!")
-    
-    try:
-        with open(COOKIES_FILE, "w", encoding="utf-8") as f:
-            f.write(raw_text)
-        global COOKIE_ARG
-        COOKIE_ARG = COOKIES_FILE
-        YTDL_OPTIONS["cookiefile"] = COOKIE_ARG
-        await ctx.send("✅ YouTube cookies updated and applied to yt-dlp in real time!")
-    except Exception as e:
-        await ctx.send(f"❌ Error saving cookies: {e}")
-
-@bot.hybrid_command(name="auth", description="Authenticate YouTube account via Google Device Code (Permanent Render bypass)")
-async def cmd_auth(ctx: commands.Context):
-    msg = await ctx.send("🔄 Requesting YouTube Cloud Device Code from Google...")
-    try:
-        import urllib.request, json
-        _cid = '861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com'
-        _sec = 'SboVhoG9s0rNafixCSGGKXAT'
-        req = urllib.request.Request(
-            'https://www.youtube.com/o/oauth2/device/code',
-            data=json.dumps({
-                'client_id': _cid,
-                'scope': 'https://gdata.youtube.com https://www.googleapis.com/auth/youtube',
-                'device_id': 'f7d2a8b3c9e102948571628394059681',
-                'device_model': 'ytlr::'
-            }).encode(),
-            headers={'Content-Type': 'application/json'}
-        )
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            cdata = json.loads(resp.read().decode())
-        
-        device_code = cdata.get("device_code")
-        user_code = cdata.get("user_code")
-        verification_url = cdata.get("verification_url", "https://www.google.com/device")
-        interval = int(cdata.get("interval", 5))
-
-        embed = discord.Embed(
-            title="🔑 YouTube Cloud Authorization",
-            description=(
-                f"**To activate 24/7 uninterrupted original YouTube playback on Render:**\n\n"
-                f"1️⃣ Open **[google.com/device]({verification_url})**\n"
-                f"2️⃣ Enter Code: **`{user_code}`**\n"
-                f"3️⃣ Click **Allow** on your Google Account\n\n"
-                f"⏳ *Listening for authorization in real time...*"
-            ),
-            color=0x5865F2
-        )
-        await msg.edit(content=None, embed=embed)
-
-        async def poll_token():
-            for _ in range(60):
-                await asyncio.sleep(interval)
-                try:
-                    preq = urllib.request.Request(
-                        'https://www.youtube.com/o/oauth2/token',
-                        data=json.dumps({
-                            'client_id': _cid,
-                            'client_secret': _sec,
-                            'code': device_code,
-                            'grant_type': 'urn:ietf:params:oauth:grant-type:device_code'
-                        }).encode(),
-                        headers={'Content-Type': 'application/json'}
-                    )
-                    with urllib.request.urlopen(preq, timeout=5) as presp:
-                        tdata = json.loads(presp.read().decode())
-                    if "access_token" in tdata:
-                        tdata["expires"] = datetime.now(timezone.utc).timestamp() + tdata.get("expires_in", 3600)
-                        with open("oauth2.json", "w", encoding="utf-8") as f:
-                            json.dump(tdata, f, indent=2)
-                        print("✅ YouTube OAuth2 successfully authenticated and saved to oauth2.json!")
-                        ok_embed = discord.Embed(
-                            title="✅ YouTube Cloud Authorization Successful!",
-                            description="Real-time YouTube streaming is now fully unlocked on Render. All tracks will play original full audio without restrictions.",
-                            color=0x57F287
-                        )
-                        try:
-                            await msg.edit(embed=ok_embed)
-                        except Exception:
-                            pass
-                        break
-                except Exception:
-                    pass
-
-        asyncio.create_task(poll_token())
-    except Exception as e:
-        await msg.edit(content=f"❌ Failed to request device code from Google: {e}")
 
 @bot.event
 async def on_message(message: discord.Message):
