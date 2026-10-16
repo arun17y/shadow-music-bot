@@ -241,11 +241,6 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import yt_dlp
-try:
-    import yt_dlp_plugins.extractor.getpot_bgutil_http
-    print("✅ Successfully registered BgUtil HTTP PO Token Provider plugin with yt-dlp!")
-except Exception as e:
-    print(f"⚠️ Could not load BgUtil plugin: {e}")
 import aiohttp
 import psutil
 
@@ -1997,6 +1992,36 @@ class MusicBot(commands.Bot):
                         "traceback": traceback.format_exc()
                     }, status=500)
 
+            async def formats_view(request):
+                url = request.query.get("url") or request.query.get("q") or "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+                try:
+                    def get_fmts():
+                        opts = {
+                            "quiet": False,
+                            "socket_timeout": 10,
+                            "js_runtimes": {"node": {}},
+                            "extractor_args": {
+                                "youtubepot-bgutilhttp": {
+                                    "base_url": ["http://127.0.0.1:4416"]
+                                }
+                            }
+                        }
+                        info = yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
+                        fmts = info.get("formats", [])
+                        return [{
+                            "format_id": f.get("format_id"),
+                            "ext": f.get("ext"),
+                            "acodec": f.get("acodec"),
+                            "vcodec": f.get("vcodec"),
+                            "protocol": f.get("protocol"),
+                            "has_url": bool(f.get("url"))
+                        } for f in fmts]
+                    fmts = await asyncio.get_event_loop().run_in_executor(None, get_fmts)
+                    return web.json_response({"status": "ok", "url": url, "count": len(fmts), "formats": fmts})
+                except Exception as ex:
+                    import traceback
+                    return web.json_response({"status": "error", "error": str(ex), "traceback": traceback.format_exc()}, status=500)
+
             async def test_pcm_view(request):
                 url = request.query.get("url", "https://www.youtube.com/watch?v=Mxv7O6BkJeE")
                 try:
@@ -2490,6 +2515,7 @@ class MusicBot(commands.Bot):
             app.router.add_get("/api/logs", logs_view)
             app.router.add_get("/api/test_extract", test_extract_view)
             app.router.add_get("/api/test_stream", test_stream_view)
+            app.router.add_get("/api/formats", formats_view)
             app.router.add_get("/api/test_pcm", test_pcm_view)
             app.router.add_get("/api/diagnose", diagnose_view)
             app.router.add_get("/api/test_play", test_play_view)
