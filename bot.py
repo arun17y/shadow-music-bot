@@ -1003,13 +1003,13 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": None,
+    "cookiefile": COOKIE_ARG,
     "socket_timeout": 8,
     "retries": 1,
     "extractor_retries": 1,
     "extractor_args": {
         "youtube": {
-            "player_client": ["visionos", "android"]
+            "player_client": ["visionos", "android", "web"]
         }
     },
 }
