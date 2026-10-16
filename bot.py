@@ -2017,6 +2017,56 @@ class MusicBot(commands.Bot):
                         "traceback": traceback.format_exc()
                     }, status=500)
 
+            async def probe_clients_view(request):
+                url = request.query.get("url") or "https://www.youtube.com/watch?v=DLlXI1-_o7Y"
+                clients_to_test = [
+                    ("tv_no_cookie", ["tv"], False),
+                    ("tv_embedded_no_cookie", ["tv_embedded"], False),
+                    ("android_no_cookie", ["android"], False),
+                    ("ios_no_cookie", ["ios"], False),
+                    ("web_no_cookie", ["web"], False),
+                    ("mweb_no_cookie", ["mweb"], False),
+                    ("web_with_cookie", ["web"], True),
+                    ("android_with_cookie", ["android"], True),
+                    ("tv_with_cookie", ["tv"], True),
+                ]
+                results = {}
+                def test_c(clist, use_ck):
+                    o = {
+                        "format": "bestaudio/18/best/b",
+                        "noplaylist": True,
+                        "quiet": True,
+                        "no_warnings": True,
+                        "socket_timeout": 8,
+                        "retries": 1,
+                        "cookiefile": COOKIE_ARG if use_ck else None,
+                        "extractor_args": {
+                            "youtube": {
+                                "player_client": clist
+                            }
+                        }
+                    }
+                    try:
+                        info = yt_dlp.YoutubeDL(o).extract_info(url, download=False)
+                        stream_url = info.get("url")
+                        return {
+                            "ok": True,
+                            "has_stream_url": bool(stream_url),
+                            "title": info.get("title"),
+                            "format_id": info.get("format_id")
+                        }
+                    except Exception as e:
+                        return {"ok": False, "error": str(e)[:160]}
+
+                for name, clist, use_ck in clients_to_test:
+                    res = await asyncio.get_event_loop().run_in_executor(None, test_c, clist, use_ck)
+                    results[name] = res
+                    if res.get("ok") and res.get("has_stream_url"):
+                        results["winner"] = name
+                        break
+
+                return web.json_response({"url": url, "results": results})
+
             async def test_stream_view(request):
                 url = request.query.get("url") or request.query.get("q") or "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
                 try:
@@ -2565,6 +2615,7 @@ class MusicBot(commands.Bot):
             app.router.add_get("/api/logs", logs_view)
             app.router.add_get("/api/test_extract", test_extract_view)
             app.router.add_get("/api/test_stream", test_stream_view)
+            app.router.add_get("/api/probe_clients", probe_clients_view)
             app.router.add_get("/api/formats", formats_view)
             app.router.add_get("/api/test_pcm", test_pcm_view)
             app.router.add_get("/api/diagnose", diagnose_view)
