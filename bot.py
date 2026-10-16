@@ -241,6 +241,11 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import yt_dlp
+try:
+    import yt_dlp_plugins.extractor.getpot_bgutil_http
+    print("✅ Successfully registered BgUtil HTTP PO Token Provider plugin with yt-dlp!")
+except Exception as e:
+    print(f"⚠️ Could not load BgUtil plugin: {e}")
 import aiohttp
 import psutil
 
