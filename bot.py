@@ -1021,28 +1021,24 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "bestaudio/18/best/b",
+    "format": "18/bestaudio/best/b",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": COOKIE_ARG,
+    "cookiefile": None,
     "socket_timeout": 10,
     "retries": 2,
     "extractor_retries": 2,
     "extractor_args": {
         "youtube": {
-            "player_client": ["web", "mweb", "android"]
-        },
-        "youtubepot-bgutilhttp": {
-            "base_url": ["http://127.0.0.1:4416"]
+            "player_client": ["android"],
+            "player_skip": ["webpage"]
         }
     },
 }
-if CHROME_TARGET:
-    YTDL_OPTIONS["impersonate"] = CHROME_TARGET
 
 # ─────────────────────────────────────────────
 #                 EMBED HELPERS (MODERN UI)
@@ -1319,53 +1315,30 @@ class YTSource(discord.PCMVolumeTransformer):
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = False
         opts["format"] = "18/bestaudio/best/b"
-        opts["cookiefile"] = COOKIE_ARG
         opts["socket_timeout"] = 12
 
         def run():
             last_err = None
-            # 1. Primary: Web + MWeb with bgutil PO token and cookies
+            # 1. Primary: Android client with webpage skip (bypasses datacenter bot blocks, returns direct googlevideo audio stream)
             try:
-                return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
-            except Exception as e:
-                last_err = e
-                print(f"⚠️ Primary direct YouTube extraction failed ({e}). Trying fallback with mobile clients...")
-
-            # 2. Fallback: Android + iOS without cookies or impersonation
-            try:
-                fb_opts = opts.copy()
-                fb_opts["cookiefile"] = None
-                fb_opts.pop("impersonate", None)
-                fb_opts["extractor_args"] = {
+                android_opts = opts.copy()
+                android_opts["cookiefile"] = None
+                android_opts["extractor_args"] = {
                     "youtube": {
-                        "player_client": ["android", "ios"]
+                        "player_client": ["android"],
+                        "player_skip": ["webpage"]
                     }
                 }
-                return yt_dlp.YoutubeDL(fb_opts).extract_info(url, download=False)
+                return yt_dlp.YoutubeDL(android_opts).extract_info(url, download=False)
             except Exception as e:
                 last_err = e
-                print(f"⚠️ Android/iOS fallback failed ({e}). Trying TV embedded client...")
+                print(f"⚠️ Primary Android direct extraction failed ({e}). Trying Web + PO token fallback...")
 
-            # 3. Fallback: TV embedded client
+            # 2. Fallback: Web + MWeb with PO token daemon
             try:
-                fb_opts2 = opts.copy()
-                fb_opts2["cookiefile"] = None
-                fb_opts2.pop("impersonate", None)
-                fb_opts2["extractor_args"] = {
-                    "youtube": {
-                        "player_client": ["tv_embedded", "tv"]
-                    }
-                }
-                return yt_dlp.YoutubeDL(fb_opts2).extract_info(url, download=False)
-            except Exception as e:
-                last_err = e
-                print(f"⚠️ TV embedded fallback failed ({e}). Trying web with PO token...")
-
-            # 4. Fallback: Web without cookies but with PO token
-            try:
-                fb_opts3 = opts.copy()
-                fb_opts3["cookiefile"] = None
-                fb_opts3["extractor_args"] = {
+                web_opts = opts.copy()
+                web_opts["cookiefile"] = COOKIE_ARG
+                web_opts["extractor_args"] = {
                     "youtube": {
                         "player_client": ["web", "mweb"]
                     },
@@ -1373,7 +1346,23 @@ class YTSource(discord.PCMVolumeTransformer):
                         "base_url": ["http://127.0.0.1:4416"]
                     }
                 }
-                return yt_dlp.YoutubeDL(fb_opts3).extract_info(url, download=False)
+                web_opts["js_runtimes"] = {"node": {}}
+                return yt_dlp.YoutubeDL(web_opts).extract_info(url, download=False)
+            except Exception as e:
+                last_err = e
+                print(f"⚠️ Web + POT fallback failed ({e}). Trying iOS client...")
+
+            # 3. Fallback: iOS client with webpage skip
+            try:
+                ios_opts = opts.copy()
+                ios_opts["cookiefile"] = None
+                ios_opts["extractor_args"] = {
+                    "youtube": {
+                        "player_client": ["ios"],
+                        "player_skip": ["webpage"]
+                    }
+                }
+                return yt_dlp.YoutubeDL(ios_opts).extract_info(url, download=False)
             except Exception as e:
                 last_err = e
                 print(f"❌ All direct YouTube audio stream extractions failed: {e}")
