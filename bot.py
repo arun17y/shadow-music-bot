@@ -1009,6 +1009,9 @@ YTDL_OPTIONS = {
     "extractor_retries": 1,
     "js_runtimes": {"node": {}},
     "extractor_args": {
+        "youtube": {
+            "player_client": ["android", "android_vr"]
+        },
         "youtubepot-bgutilhttp": {
             "base_url": ["http://127.0.0.1:4416"]
         }
@@ -1151,8 +1154,12 @@ class YTSource(discord.PCMVolumeTransformer):
             if not selected:
                 selected = data["entries"][0]
             data = selected
-        if data and not data.get("webpage_url") and data.get("url"):
-            data["webpage_url"] = data["url"]
+        if data:
+            u = data.get("webpage_url") or data.get("url") or ""
+            if u and not u.startswith("http"):
+                u = f"https://www.youtube.com/watch?v={u}"
+            data["url"] = u
+            data["webpage_url"] = u
         return data or {}
 
     @classmethod
@@ -1196,8 +1203,11 @@ class YTSource(discord.PCMVolumeTransformer):
             if not selected and entries:
                 selected = entries[0]
             if selected:
-                if not selected.get("webpage_url") and selected.get("url"):
-                    selected["webpage_url"] = selected["url"]
+                u = selected.get("webpage_url") or selected.get("url") or ""
+                if u and not u.startswith("http"):
+                    u = f"https://www.youtube.com/watch?v={u}"
+                selected["url"] = u
+                selected["webpage_url"] = u
                 return [selected], False
             return [], False
         else:
@@ -1205,12 +1215,18 @@ class YTSource(discord.PCMVolumeTransformer):
             if is_playlist:
                 tracks = [e for e in data["entries"] if e]
                 for t in tracks:
-                    if not t.get("webpage_url") and t.get("url"):
-                        t["webpage_url"] = t["url"]
+                    u = t.get("webpage_url") or t.get("url") or ""
+                    if u and not u.startswith("http"):
+                        u = f"https://www.youtube.com/watch?v={u}"
+                    t["url"] = u
+                    t["webpage_url"] = u
                 return tracks, True
             else:
-                if not data.get("webpage_url") and data.get("url"):
-                    data["webpage_url"] = data["url"]
+                u = data.get("webpage_url") or data.get("url") or ""
+                if u and not u.startswith("http"):
+                    u = f"https://www.youtube.com/watch?v={u}"
+                data["url"] = u
+                data["webpage_url"] = u
                 return [data], False
 
     @classmethod
@@ -1224,29 +1240,18 @@ class YTSource(discord.PCMVolumeTransformer):
             try:
                 return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
             except Exception as e:
-                print(f"⚠️ Primary YouTube extract failed ({e}). Attempting fallback...")
-                # Fast fallback with SoundCloud if YouTube blocks
-                search_term = track_title or url
-                clean_term = re.sub(r'\(.*?\)|\[.*?\]', '', search_term).strip()
-                clean_term = re.sub(r'(?i)\b(official\s*(video|audio|music\s*video|lyric\s*video)?|full\s*video|4k|hd|remastered|lyrics?)\b', '', clean_term).strip()
-                if "|" in clean_term:
-                    clean_term = clean_term.split("|")[0].strip()
+                print(f"⚠️ Primary YouTube extract failed ({e}). Attempting Android VR fallback...")
                 try:
-                    sc_opts = {
-                        "format": "bestaudio/best",
-                        "quiet": True,
-                        "ignoreerrors": True,
-                        "socket_timeout": 5
+                    fallback_opts = opts.copy()
+                    fallback_opts["extractor_args"] = {
+                        "youtube": {
+                            "player_client": ["android_vr", "android"]
+                        }
                     }
-                    sc_data = yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch3:{clean_term}", download=False)
-                    entries = sc_data.get("entries", []) if sc_data else []
-                    for sc_entry in entries:
-                        if sc_entry and sc_entry.get("url"):
-                            print(f"✅ Fallback to audio stream succeeded: {sc_entry.get('title')}")
-                            return sc_entry
-                except Exception:
-                    pass
-                raise e
+                    return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
+                except Exception as fb_err:
+                    print(f"❌ YouTube fallback failed ({fb_err})")
+                    raise e
 
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
@@ -1937,7 +1942,7 @@ class MusicBot(commands.Bot):
                 return web.Response(text="\n".join(RECENT_LOGS), content_type="text/plain")
 
             async def test_extract_view(request):
-                query = request.query.get("url", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+                query = request.query.get("url") or request.query.get("q") or "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
                 try:
                     tracks, is_pl = await YTSource.extract_tracks(query, asyncio.get_event_loop())
                     res_summary = []
@@ -1966,7 +1971,7 @@ class MusicBot(commands.Bot):
                     }, status=500)
 
             async def test_stream_view(request):
-                url = request.query.get("url", "https://www.youtube.com/watch?v=Mxv7O6BkJeE")
+                url = request.query.get("url") or request.query.get("q") or "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
                 try:
                     src = await YTSource.stream(url, asyncio.get_event_loop())
                     stream_url = src.data.get("url") if src.data else None
@@ -3163,6 +3168,11 @@ async def slash_play(ctx: commands.Context, *, query: Optional[str] = None):
             p.queue.append(track)
             print(f"DEBUG: slash_play resolved track: {track['title']} (URL: {track['url']})")
             if not p.is_playing() and not p.is_paused():
+                if searching_msg:
+                    try:
+                        await searching_msg.edit(embed=make_embed("🎶 Loading...", f"Loading audio for **{track['title']}**...", 0x2B2D31))
+                    except Exception:
+                        pass
                 print("DEBUG: slash_play calling play_next")
                 await play_next(ctx.guild, interaction)
                 print("DEBUG: slash_play play_next completed")
