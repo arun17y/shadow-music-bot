@@ -1227,7 +1227,26 @@ class YTSource(discord.PCMVolumeTransformer):
             q = query
         
         def run():
-            return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
+            try:
+                return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
+            except Exception as e:
+                if not is_search and ("youtube.com" in q or "youtu.be" in q):
+                    try:
+                        import urllib.request, json, urllib.parse
+                        oembed_url = f"https://www.youtube.com/oembed?url={urllib.parse.quote(q)}&format=json"
+                        req = urllib.request.Request(oembed_url, headers={"User-Agent": "Mozilla/5.0"})
+                        with urllib.request.urlopen(req, timeout=5) as resp:
+                            oe = json.loads(resp.read().decode())
+                            return {
+                                "title": oe.get("title", "Unknown Track"),
+                                "url": q,
+                                "webpage_url": q,
+                                "duration": 0,
+                                "uploader": oe.get("author_name", "YouTube")
+                            }
+                    except Exception:
+                        pass
+                raise e
 
         data = await loop.run_in_executor(None, run)
         if not data:
@@ -1333,10 +1352,20 @@ class YTSource(discord.PCMVolumeTransformer):
                     raw_title = track_title or ""
                     if not raw_title and ("youtube.com" in url or "youtu.be" in url):
                         try:
-                            flat_info = yt_dlp.YoutubeDL({"extract_flat": True, "quiet": True}).extract_info(url, download=False)
-                            raw_title = flat_info.get("title") or ""
+                            import urllib.request, json, urllib.parse
+                            oembed_url = f"https://www.youtube.com/oembed?url={urllib.parse.quote(url)}&format=json"
+                            req = urllib.request.Request(oembed_url, headers={"User-Agent": "Mozilla/5.0"})
+                            with urllib.request.urlopen(req, timeout=4) as resp:
+                                oe = json.loads(resp.read().decode())
+                                raw_title = oe.get("title") or ""
                         except Exception:
                             pass
+                        if not raw_title:
+                            try:
+                                flat_info = yt_dlp.YoutubeDL({"extract_flat": True, "quiet": True}).extract_info(url, download=False)
+                                raw_title = flat_info.get("title") or ""
+                            except Exception:
+                                pass
                     clean_title = raw_title.split("|")[0]
                     clean_title = re.sub(r'(?i)(\[.*?\]|\(.*?\)|official video|music video|lyric video|official audio|full song|video song|song|lyrics|audio)', '', clean_title).strip()
                     mirror_query = clean_title if clean_title else raw_title
