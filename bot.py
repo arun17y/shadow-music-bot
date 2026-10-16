@@ -251,6 +251,12 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import yt_dlp
+import yt_dlp.plugins
+try:
+    yt_dlp.plugins.load_all_plugins()
+    print("✅ yt-dlp plugins loaded successfully.")
+except Exception as _pl_err:
+    print(f"⚠️ Failed to load yt-dlp plugins: {_pl_err}")
 import aiohttp
 import psutil
 
