@@ -996,20 +996,20 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "bestaudio/best/18/22/b",
+    "format": "18/bestaudio/best/b",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": COOKIE_ARG,
+    "cookiefile": None,
     "socket_timeout": 8,
     "retries": 1,
     "extractor_retries": 1,
     "extractor_args": {
         "youtube": {
-            "player_client": ["visionos", "android", "web"]
+            "player_client": ["android", "android_vr", "visionos"]
         }
     },
 }
@@ -1186,16 +1186,36 @@ class YTSource(discord.PCMVolumeTransformer):
             
         if is_search:
             entries = data.get("entries", [])
+            q_lower = query.lower()
             selected = None
             for e in entries:
                 if not e: continue
                 dur = int(e.get("duration") or 0)
                 url = e.get("url") or e.get("webpage_url") or ""
-                # Strictly filter out YouTube Shorts (duration < 60s or /shorts/ in url)
-                if "/shorts/" in url or (0 < dur < 60):
+                title = (e.get("title") or "").lower()
+                # Strictly filter out YouTube Shorts (duration < 60s or /shorts/ in url or #shorts in title)
+                if "/shorts/" in url or "#shorts" in title or "#short" in title or (0 < dur < 60):
+                    continue
+                # Filter out 1 hour / loop / extended unless explicitly requested
+                if not any(k in q_lower for k in ["1 hour", "1hr", "10 hour", "loop", "extended"]):
+                    if any(k in title for k in ["1 hour", "10 hour", "10 hrs", "1 hr loop", "[1 hour]"]):
+                        continue
+                if "slowed" not in q_lower and ("slowed" in title or "reverb" in title):
+                    continue
+                if "sped" not in q_lower and "speed" not in q_lower and ("sped up" in title or "speed up" in title):
+                    continue
+                if "edit" not in q_lower and ("[edit" in title or "(edit" in title or "edit audio" in title):
                     continue
                 selected = e
                 break
+            if not selected and entries:
+                for e in entries:
+                    if not e: continue
+                    dur = int(e.get("duration") or 0)
+                    url = e.get("url") or e.get("webpage_url") or ""
+                    if "/shorts/" not in url and dur >= 60:
+                        selected = e
+                        break
             if not selected and entries:
                 selected = entries[0]
             if selected:
@@ -1229,19 +1249,20 @@ class YTSource(discord.PCMVolumeTransformer):
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = False
-        opts["format"] = "bestaudio/best/18/22/b"
+        opts["format"] = "18/bestaudio/best/b"
+        opts["cookiefile"] = None
         opts["socket_timeout"] = 10
 
         def run():
             try:
                 return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
             except Exception as e:
-                print(f"⚠️ Primary YouTube extract failed ({e}). Attempting fallback...")
+                print(f"⚠️ Primary YouTube extract failed ({e}). Attempting Android VR fallback...")
                 try:
                     fallback_opts = opts.copy()
                     fallback_opts["extractor_args"] = {
                         "youtube": {
-                            "player_client": ["android", "web"]
+                            "player_client": ["android_vr", "android"]
                         }
                     }
                     return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
