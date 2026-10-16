@@ -1011,7 +1011,7 @@ YTDL_OPTIONS = {
     "remote_components": ["ejs:github", "ejs:npm"],
     "extractor_args": {
         "youtube": {
-            "player_client": ["web", "android"]
+            "player_client": ["android", "android_vr"]
         },
         "youtubepot-bgutilhttp": {
             "base_url": ["http://127.0.0.1:4416"]
@@ -1977,12 +1977,14 @@ class MusicBot(commands.Bot):
                     src = await YTSource.stream(url, asyncio.get_event_loop())
                     stream_url = src.data.get("url") if src.data else None
                     title = src.data.get("title") if src.data else "Unknown"
+                    domain = stream_url.split("/")[2] if stream_url else None
+                    src.cleanup()
                     return web.json_response({
                         "status": "ok",
                         "url": url,
                         "title": title,
                         "has_stream_url": bool(stream_url),
-                        "stream_domain": stream_url.split("/")[2] if stream_url else None
+                        "stream_domain": domain
                     })
                 except Exception as ex:
                     import traceback
@@ -1997,16 +1999,9 @@ class MusicBot(commands.Bot):
                 url = request.query.get("url") or request.query.get("q") or "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
                 try:
                     def get_fmts():
-                        opts = {
-                            "quiet": False,
-                            "socket_timeout": 10,
-                            "js_runtimes": {"node": {}},
-                            "extractor_args": {
-                                "youtubepot-bgutilhttp": {
-                                    "base_url": ["http://127.0.0.1:4416"]
-                                }
-                            }
-                        }
+                        opts = YTDL_OPTIONS.copy()
+                        opts["extract_flat"] = False
+                        opts["quiet"] = True
                         info = yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
                         fmts = info.get("formats", [])
                         return [{
