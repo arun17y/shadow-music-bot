@@ -318,6 +318,15 @@ if os.path.exists(CONFIG_FILE) and BOT_TOKEN:
         pass
 
 
+env_cookies = os.environ.get("YOUTUBE_COOKIES") or os.environ.get("COOKIES_TEXT")
+if env_cookies:
+    try:
+        with open(COOKIES_FILE, "w", encoding="utf-8") as _ef:
+            _ef.write(env_cookies)
+        print("✅ Synced cookies from environment variable to cookies.txt")
+    except Exception as _ece:
+        print(f"⚠️ Failed to write environment cookies: {_ece}")
+
 COOKIE_ARG = None
 if os.path.exists(COOKIES_FILE):
     try:
@@ -335,7 +344,7 @@ if os.path.exists(COOKIES_FILE):
                 if _parts[0].startswith("."):
                     _parts[1] = "TRUE"
                 _clean_lines.append("\t".join(_parts) + "\n")
-                if "LOGIN_INFO" in _parts[5]:
+                if any(k in _parts[5] for k in ("LOGIN_INFO", "SID", "VISITOR_INFO1_LIVE", "SAPISID", "SSID", "HSID", "PREF")):
                     has_yt_login = True
         with open(COOKIES_FILE, "w", encoding="utf-8") as _cf:
             _cf.writelines(_clean_lines)
@@ -344,7 +353,7 @@ if os.path.exists(COOKIES_FILE):
             print(f"✅ Loaded verified YouTube account cookies from {COOKIES_FILE}")
         else:
             COOKIE_ARG = None
-            print(f"ℹ️ {COOKIES_FILE} does not contain authenticated YouTube session cookies. Using Chrome TLS impersonation.")
+            print(f"ℹ️ {COOKIES_FILE} does not contain valid YouTube session cookies. Using Chrome TLS impersonation.")
     except Exception as _ce:
         print(f"⚠️ Error sanitizing {COOKIES_FILE}: {_ce}")
         COOKIE_ARG = None
@@ -2645,6 +2654,27 @@ class MusicBot(commands.Bot):
                 except Exception as e:
                     return web.json_response({"status": "error", "error": str(e)}, status=500)
 
+            async def upload_cookies_api(request):
+                try:
+                    data = {}
+                    try:
+                        data = await request.post()
+                    except Exception:
+                        pass
+                    text = data.get("cookies") if data else None
+                    if not text:
+                        text = await request.text()
+                    if not text or not text.strip():
+                        return web.json_response({"status": "error", "error": "No cookies provided in body"}, status=400)
+                    with open(COOKIES_FILE, "w", encoding="utf-8") as f:
+                        f.write(text)
+                    global COOKIE_ARG
+                    COOKIE_ARG = COOKIES_FILE
+                    YTDL_OPTIONS["cookiefile"] = COOKIE_ARG
+                    return web.json_response({"status": "ok", "message": "Cookies saved and activated for yt-dlp in real time"})
+                except Exception as ex:
+                    return web.json_response({"status": "error", "error": str(ex)}, status=500)
+
             app.router.add_get("/", root_view)
             app.router.add_get("/api/health", health_check)
             app.router.add_get("/health", health_check)
@@ -2660,6 +2690,7 @@ class MusicBot(commands.Bot):
             app.router.add_get("/api/test_play", test_play_view)
             app.router.add_get("/api/sync_commands", sync_commands_api)
             app.router.add_post("/api/sync_commands", sync_commands_api)
+            app.router.add_post("/api/upload_cookies", upload_cookies_api)
 
             port = int(os.environ.get("PORT", 3005))
             runner = web.AppRunner(app)
@@ -2760,6 +2791,30 @@ async def cmd_sync(ctx: commands.Context):
         await msg.edit(content=f"✅ Purged duplicates! Single clean global slash tree active with **{len(synced)}** unique commands.")
     except Exception as e:
         await msg.edit(content=f"⚠️ Sync error: {e}")
+
+@bot.command(name="setcookies", description="Update YouTube cookies dynamically")
+async def cmd_setcookies(ctx: commands.Context, *, cookie_content: str = None):
+    if OWNER_IDS and ctx.author.id not in OWNER_IDS:
+        return await ctx.send("❌ Only bot owner can update YouTube cookies.")
+    raw_text = cookie_content or ""
+    if ctx.message.attachments:
+        att = ctx.message.attachments[0]
+        try:
+            raw_text = (await att.read()).decode("utf-8", errors="ignore")
+        except Exception as e:
+            return await ctx.send(f"❌ Failed to read attached file: {e}")
+    if not raw_text.strip():
+        return await ctx.send("ℹ️ Send `.setcookies` with text or attach a `cookies.txt` file!")
+    
+    try:
+        with open(COOKIES_FILE, "w", encoding="utf-8") as f:
+            f.write(raw_text)
+        global COOKIE_ARG
+        COOKIE_ARG = COOKIES_FILE
+        YTDL_OPTIONS["cookiefile"] = COOKIE_ARG
+        await ctx.send("✅ YouTube cookies updated and applied to yt-dlp in real time!")
+    except Exception as e:
+        await ctx.send(f"❌ Error saving cookies: {e}")
 
 @bot.event
 async def on_message(message: discord.Message):
