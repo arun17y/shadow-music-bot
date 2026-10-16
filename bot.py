@@ -1007,7 +1007,7 @@ YTDL_OPTIONS = {
     "socket_timeout": 8,
     "retries": 1,
     "extractor_retries": 1,
-    "js_runtimes": {"node": {}},
+    "js_runtimes": {"deno": {}},
     "extractor_args": {
         "youtube": {
             "player_client": ["web", "android"]
