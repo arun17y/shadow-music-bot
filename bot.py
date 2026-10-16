@@ -996,7 +996,7 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "bestaudio/best",
+    "format": "bestaudio/best/18/22/b",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
@@ -1217,7 +1217,7 @@ class YTSource(discord.PCMVolumeTransformer):
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = False
-        opts["format"] = "bestaudio/best"
+        opts["format"] = "bestaudio/best/18/22/b"
         opts["socket_timeout"] = 10
 
         def run():
