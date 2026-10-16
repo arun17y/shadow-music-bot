@@ -1331,6 +1331,12 @@ class YTSource(discord.PCMVolumeTransformer):
                 # Resilient audio stream fallback: search mirror for the exact track
                 try:
                     raw_title = track_title or ""
+                    if not raw_title and ("youtube.com" in url or "youtu.be" in url):
+                        try:
+                            flat_info = yt_dlp.YoutubeDL({"extract_flat": True, "quiet": True}).extract_info(url, download=False)
+                            raw_title = flat_info.get("title") or ""
+                        except Exception:
+                            pass
                     clean_title = raw_title.split("|")[0]
                     clean_title = re.sub(r'(?i)(\[.*?\]|\(.*?\)|official video|music video|lyric video|official audio|full song|video song|song|lyrics|audio)', '', clean_title).strip()
                     mirror_query = clean_title if clean_title else raw_title
@@ -2144,7 +2150,7 @@ class MusicBot(commands.Bot):
             async def test_stream_view(request):
                 url = request.query.get("url") or request.query.get("q") or "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
                 try:
-                    src = await YTSource.stream(url, asyncio.get_event_loop())
+                    src = await YTSource.stream(url, asyncio.get_event_loop(), track_title=request.query.get("title"))
                     stream_url = src.data.get("url") if src.data else None
                     title = src.data.get("title") if src.data else "Unknown"
                     domain = stream_url.split("/")[2] if stream_url else None
