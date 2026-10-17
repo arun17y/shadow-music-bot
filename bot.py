@@ -1013,7 +1013,7 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": None,
+    "cookiefile": COOKIES_FILE if os.path.exists(COOKIES_FILE) else None,
     "socket_timeout": 10,
     "retries": 1,
     "extractor_retries": 1,
@@ -1284,23 +1284,22 @@ class YTSource(discord.PCMVolumeTransformer):
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = False
-        opts["format"] = "18/bestaudio/best/b"
-        opts["cookiefile"] = None
-        opts["socket_timeout"] = 10
+        opts["format"] = "bestaudio/best"
+        cookie_path = COOKIES_FILE if os.path.exists(COOKIES_FILE) else None
+        if cookie_path:
+            opts["cookiefile"] = cookie_path
+        opts["socket_timeout"] = 12
 
         def run():
             try:
                 return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
             except Exception as e:
-                print(f"⚠️ Primary YouTube extract failed ({e}). Attempting Android VR fallback...")
+                print(f"⚠️ Primary YouTube extract failed ({e}). Attempting fallback...")
                 try:
                     fallback_opts = opts.copy()
                     fallback_opts["extractor_args"] = {
                         "youtube": {
-                            "player_client": ["android_vr", "android"]
-                        },
-                        "youtubepot-bgutilhttp": {
-                            "base_url": ["http://127.0.0.1:4416"]
+                            "player_client": ["visionos", "android", "ios", "tv"]
                         }
                     }
                     return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
