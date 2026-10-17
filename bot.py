@@ -1065,6 +1065,9 @@ YTDL_OPTIONS = {
     "extractor_retries": 2,
     "js_runtimes": {"node": {}, "deno": {}},
 }
+if CHROME_TARGET:
+    YTDL_OPTIONS["impersonate"] = CHROME_TARGET
+
 
 def get_po_token(video_id: str = "") -> dict:
     try:
