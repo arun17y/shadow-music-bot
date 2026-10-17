@@ -1314,34 +1314,63 @@ class YTSource(discord.PCMVolumeTransformer):
 
             opts = YTDL_OPTIONS.copy()
             opts["format"] = "bestaudio/18/b/best"
-            if COOKIE_ARG and os.path.exists(COOKIE_ARG) and os.path.getsize(COOKIE_ARG) > 50:
-                opts["cookiefile"] = COOKIE_ARG
-            else:
-                opts["cookiefile"] = None
 
+            # Tier 1: Clean Web client with PO Token
             if pot_token:
-                opts["extractor_args"] = {
+                opts_pot = opts.copy()
+                opts_pot["cookiefile"] = None
+                opts_pot["extractor_args"] = {
                     "youtube": {
-                        "po_token": [f"web+{pot_token}", f"mweb+{pot_token}"]
+                        "player_client": ["web"],
+                        "po_token": [f"web+{pot_token}"]
                     }
                 }
-            try:
-                res = yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
-                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                    return res
-            except Exception as e:
-                print(f"⚠️ Primary extract hit: {e}. Trying fallback...")
-
-            if opts.get("cookiefile"):
-                opts_noc = opts.copy()
-                opts_noc["cookiefile"] = None
                 try:
-                    res = yt_dlp.YoutubeDL(opts_noc).extract_info(url, download=False)
+                    res = yt_dlp.YoutubeDL(opts_pot).extract_info(url, download=False)
                     if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                        print(f"✅ Tier 1 (PO Token Web) extract succeeded for {vid_id or url}!")
                         return res
-                except Exception as e_noc:
-                    print(f"⚠️ No-cookie fallback hit: {e_noc}. Trying TV client...")
+                except Exception as e_pot:
+                    print(f"⚠️ Tier 1 (PO Token Web) failed: {e_pot}. Trying Tier 2...")
 
+            # Tier 2: MWeb client with PO Token
+            if pot_token:
+                opts_mweb = opts.copy()
+                opts_mweb["cookiefile"] = None
+                opts_mweb["extractor_args"] = {
+                    "youtube": {
+                        "player_client": ["mweb"],
+                        "po_token": [f"mweb+{pot_token}"]
+                    }
+                }
+                try:
+                    res = yt_dlp.YoutubeDL(opts_mweb).extract_info(url, download=False)
+                    if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                        print(f"✅ Tier 2 (PO Token MWeb) extract succeeded for {vid_id or url}!")
+                        return res
+                except Exception as e_mweb:
+                    print(f"⚠️ Tier 2 (PO Token MWeb) failed: {e_mweb}. Trying Tier 3...")
+
+            # Tier 3: With cookies (if provided and valid)
+            if COOKIE_ARG and os.path.exists(COOKIE_ARG) and os.path.getsize(COOKIE_ARG) > 50:
+                opts_cookie = opts.copy()
+                opts_cookie["cookiefile"] = COOKIE_ARG
+                if pot_token:
+                    opts_cookie["extractor_args"] = {
+                        "youtube": {
+                            "player_client": ["web"],
+                            "po_token": [f"web+{pot_token}"]
+                        }
+                    }
+                try:
+                    res = yt_dlp.YoutubeDL(opts_cookie).extract_info(url, download=False)
+                    if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                        print(f"✅ Tier 3 (Cookies) extract succeeded!")
+                        return res
+                except Exception as e_c:
+                    print(f"⚠️ Tier 3 (Cookies) failed: {e_c}. Trying TV client...")
+
+            # Tier 4: TV embedded client
             opts_tv = opts.copy()
             opts_tv["cookiefile"] = None
             opts_tv["extractor_args"] = {
@@ -1352,10 +1381,12 @@ class YTSource(discord.PCMVolumeTransformer):
             try:
                 res = yt_dlp.YoutubeDL(opts_tv).extract_info(url, download=False)
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                    print("✅ Tier 4 (TV Embedded) extract succeeded!")
                     return res
             except Exception as e2:
-                print(f"⚠️ TV extract hit: {e2}. Trying iOS client...")
+                print(f"⚠️ Tier 4 (TV) failed: {e2}. Trying iOS client...")
 
+            # Tier 5: iOS client
             opts_ios = opts.copy()
             opts_ios["cookiefile"] = None
             opts_ios["extractor_args"] = {
@@ -1366,6 +1397,7 @@ class YTSource(discord.PCMVolumeTransformer):
             try:
                 res = yt_dlp.YoutubeDL(opts_ios).extract_info(url, download=False)
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                    print("✅ Tier 5 (iOS) extract succeeded!")
                     return res
             except Exception as e3:
                 print(f"❌ All direct YouTube stream extractions failed: {e3}")
