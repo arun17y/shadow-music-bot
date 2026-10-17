@@ -2758,11 +2758,11 @@ class MusicBot(commands.Bot):
                     for g in self.guilds:
                         try:
                             self.tree.clear_commands(guild=g)
-                            await self.tree.sync(guild=g)
+                            await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(self.tree.sync(guild=g), self.loop))
                             cleared_guilds += 1
                         except Exception:
                             pass
-                    synced = await self.tree.sync()
+                    synced = await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(self.tree.sync(), self.loop))
                     return web.json_response({
                         "status": "ok",
                         "cleared_guilds": cleared_guilds,
@@ -2857,7 +2857,8 @@ class MusicBot(commands.Bot):
                         await asyncio.sleep(0.5)
                     except Exception as ge:
                         print(f"⚠️ Guild cleanup warning for {g.name}: {ge}")
-                print(f"🧹 Purged all duplicate guild commands across {len(self.guilds)} guilds. Single clean global tree active.")
+                synced = await self.tree.sync()
+                print(f"🧹 Purged duplicates and synced {len(synced)} global commands cleanly across {len(self.guilds)} guilds.")
             except Exception as e:
                 print(f"⚠️ Duplicate cleanup error: {e}")
         asyncio.create_task(purge_guild_duplicates())
