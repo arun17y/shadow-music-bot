@@ -1382,7 +1382,26 @@ class YTSource(discord.PCMVolumeTransformer):
             opts = YTDL_OPTIONS.copy()
             opts["format"] = "bestaudio/18/b/best"
 
-            # Tier 1: Apple VisionOS native client (Zero bot blocks, direct Google Video audio)
+            # Tier 1: Automated bgutil-pot plugin integration (Official Provider on port 4416)
+            opts_plugin = opts.copy()
+            opts_plugin["cookiefile"] = None
+            opts_plugin["extractor_args"] = {
+                "youtubepot-bgutilhttp": {
+                    "base_url": ["http://127.0.0.1:4416"]
+                },
+                "youtube": {
+                    "player_client": ["web", "mweb"]
+                }
+            }
+            try:
+                res = yt_dlp.YoutubeDL(opts_plugin).extract_info(url, download=False)
+                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                    print(f"✅ Tier 1 (bgutil Plugin Provider) extract succeeded for {vid_id or url}!")
+                    return res
+            except Exception as e_p:
+                print(f"⚠️ Tier 1 (bgutil Plugin Provider) failed: {e_p}. Trying VisionOS...")
+
+            # Tier 2: Apple VisionOS native client (Zero bot blocks, direct Google Video audio)
             opts_vision = opts.copy()
             opts_vision["cookiefile"] = None
             opts_vision["extractor_args"] = {
@@ -1393,12 +1412,12 @@ class YTSource(discord.PCMVolumeTransformer):
             try:
                 res = yt_dlp.YoutubeDL(opts_vision).extract_info(url, download=False)
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                    print(f"✅ Tier 1 (VisionOS) extract succeeded for {vid_id or url}!")
+                    print(f"✅ Tier 2 (VisionOS) extract succeeded for {vid_id or url}!")
                     return res
             except Exception as e_v:
-                print(f"⚠️ Tier 1 (VisionOS) failed: {e_v}. Trying Tier 2 (PO Token Web)...")
+                print(f"⚠️ Tier 2 (VisionOS) failed: {e_v}. Trying Tier 3 (PO Token Web)...")
 
-            # Tier 2: Clean Web client with PO Token
+            # Tier 3: Clean Web client with manual PO Token
             if pot_token:
                 opts_pot = opts.copy()
                 opts_pot["cookiefile"] = None
@@ -1411,10 +1430,10 @@ class YTSource(discord.PCMVolumeTransformer):
                 try:
                     res = yt_dlp.YoutubeDL(opts_pot).extract_info(url, download=False)
                     if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                        print(f"✅ Tier 2 (PO Token Web) extract succeeded for {vid_id or url}!")
+                        print(f"✅ Tier 3 (PO Token Web) extract succeeded for {vid_id or url}!")
                         return res
                 except Exception as e_pot:
-                    print(f"⚠️ Tier 2 (PO Token Web) failed: {e_pot}. Trying Tier 3...")
+                    print(f"⚠️ Tier 3 (PO Token Web) failed: {e_pot}. Trying Tier 4...")
 
             # Tier 2: MWeb client with PO Token
             if pot_token:
@@ -2754,18 +2773,18 @@ class MusicBot(commands.Bot):
 
             async def sync_commands_api(request):
                 try:
-                    synced_guilds = 0
+                    cleared_guilds = 0
                     for g in self.guilds:
                         try:
-                            self.tree.copy_global_to(guild=g)
+                            self.tree.clear_commands(guild=g)
                             await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(self.tree.sync(guild=g), self.loop))
-                            synced_guilds += 1
+                            cleared_guilds += 1
                         except Exception as ge:
-                            print(f"Error syncing guild {g.name}: {ge}")
+                            print(f"Error clearing guild {g.name}: {ge}")
                     synced = await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(self.tree.sync(), self.loop))
                     return web.json_response({
                         "status": "ok",
-                        "synced_guilds": synced_guilds,
+                        "cleared_guilds": cleared_guilds,
                         "global_commands_synced": len(synced),
                         "commands": [c.name for c in synced]
                     })
@@ -2852,13 +2871,13 @@ class MusicBot(commands.Bot):
             try:
                 for g in self.guilds:
                     try:
-                        self.tree.copy_global_to(guild=g)
+                        self.tree.clear_commands(guild=g)
                         await self.tree.sync(guild=g)
                         await asyncio.sleep(0.5)
                     except Exception as ge:
-                        print(f"⚠️ Guild sync warning for {g.name}: {ge}")
+                        print(f"⚠️ Guild duplicate purge warning for {g.name}: {ge}")
                 synced = await self.tree.sync()
-                print(f"✅ Synced {len(synced)} commands instantly across {len(self.guilds)} guilds.")
+                print(f"🧹 Purged all duplicate guild commands! Single clean global tree active with {len(synced)} unique commands.")
             except Exception as e:
                 print(f"⚠️ Duplicate cleanup error: {e}")
         asyncio.create_task(purge_guild_duplicates())
@@ -2901,17 +2920,16 @@ class MusicBot(commands.Bot):
 
 bot = MusicBot()
 
-@bot.command(name="sync", description="Sync all slash commands instantly to this server")
+@bot.command(name="sync", description="Purge duplicate guild commands and sync single global tree")
 @commands.has_permissions(administrator=True)
 async def cmd_sync(ctx: commands.Context):
-    msg = await ctx.send("🔄 Syncing slash commands instantly to this server...")
+    msg = await ctx.send("🧹 Purging all duplicate commands from this server and syncing single clean tree...")
     try:
         if ctx.guild:
-            bot.tree.copy_global_to(guild=ctx.guild)
-            synced_g = await bot.tree.sync(guild=ctx.guild)
+            bot.tree.clear_commands(guild=ctx.guild)
+            await bot.tree.sync(guild=ctx.guild)
         synced = await bot.tree.sync()
-        count = len(synced_g) if ctx.guild else len(synced)
-        await msg.edit(content=f"✅ Commands synced instantly! **{count}** slash commands active in this server (including `/bot profile`).")
+        await msg.edit(content=f"✅ All duplicate commands purged! Single clean global tree active with **{len(synced)}** unique commands.")
     except Exception as e:
         await msg.edit(content=f"⚠️ Sync error: {e}")
 
