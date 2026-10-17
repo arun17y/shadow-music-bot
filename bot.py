@@ -997,7 +997,7 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "18/b/best/bestaudio",
+    "format": "bestaudio[ext=m4a]/bestaudio/best[ext=webm]/best/bestvideo+bestaudio",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
@@ -1005,14 +1005,10 @@ YTDL_OPTIONS = {
     "no_warnings": True,
     "default_search": "ytsearch",
     "cookiefile": COOKIE_ARG,
-    "socket_timeout": 6,
+    "socket_timeout": 5,
     "retries": 1,
     "extractor_retries": 1,
-    "extractor_args": {
-        "youtube": {
-            "player_client": ["android", "ios", "web"]
-        }
-    },
+    "js_runtimes": {"node": {}},
 }
 
 # ─────────────────────────────────────────────
@@ -1293,39 +1289,32 @@ class YTSource(discord.PCMVolumeTransformer):
         vid_match = re.search(r'(?:v=|\/|youtu\.be\/)([0-9A-Za-z_-]{11})', url)
         video_id = vid_match.group(1) if vid_match else None
 
-        # 1. Primary: Direct yt-dlp extraction with verified cookies
+        # 1. Primary: Direct yt-dlp extraction with verified cookies (capped at 2.5s)
         def _get_yt():
             opts = YTDL_OPTIONS.copy()
-            opts["format"] = "bestaudio/18/best/b"
+            opts["format"] = "bestaudio[ext=m4a]/bestaudio/best[ext=webm]/best/bestvideo+bestaudio"
             opts["noplaylist"] = True
             opts["quiet"] = True
             opts["no_warnings"] = True
-            opts["socket_timeout"] = 10
-            opts["retries"] = 1
-            opts["extractor_retries"] = 1
+            opts["socket_timeout"] = 3
+            opts["retries"] = 0
+            opts["extractor_retries"] = 0
             opts["cookiefile"] = COOKIE_ARG
+            opts["js_runtimes"] = {"node": {}}
             try:
                 res = yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
                     return res
             except Exception as e:
-                print(f"⚠️ Direct yt-dlp with cookies hit: {e}. Trying no-cookies clients...")
-
-            # Secondary direct attempt without cookies (android / tv_embedded)
-            opts_no = opts.copy()
-            opts_no["cookiefile"] = None
-            opts_no["extractor_args"] = {
-                "youtube": {
-                    "player_client": ["android", "tv_embedded"]
-                }
-            }
-            try:
-                return yt_dlp.YoutubeDL(opts_no).extract_info(url, download=False)
-            except Exception as e2:
-                print(f"⚠️ Direct yt-dlp guest extract hit: {e2}...")
+                print(f"⚠️ Direct yt-dlp hit: {e}. Falling back to instant mirror...")
             return None
 
-        data = await loop.run_in_executor(None, _get_yt)
+        data = None
+        try:
+            data = await asyncio.wait_for(loop.run_in_executor(None, _get_yt), timeout=2.5)
+        except Exception:
+            pass
+
         if data and "entries" in data and len(data["entries"]) > 0:
             data = data["entries"][0]
 
@@ -1342,7 +1331,7 @@ class YTSource(discord.PCMVolumeTransformer):
             async with aiohttp.ClientSession() as session:
                 for ep in invidious_endpoints:
                     try:
-                        async with session.get(ep, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+                        async with session.get(ep, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}, timeout=aiohttp.ClientTimeout(total=3)) as resp:
                             if resp.status == 200:
                                 v_info = await resp.json()
                                 afmts = [f for f in v_info.get("adaptiveFormats", []) if "audio" in f.get("type", "") and f.get("url")]
