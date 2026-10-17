@@ -336,6 +336,43 @@ if os.path.exists(COOKIES_FILE):
 else:
     print(f"ℹ️ {COOKIES_FILE} not found. YouTube streaming will use Chrome TLS impersonation.")
 
+def reload_youtube_cookies(content: str) -> dict:
+    global COOKIE_ARG, YTDL_OPTIONS
+    try:
+        lines = content.strip().splitlines()
+        clean = ["# Netscape HTTP Cookie File\n# Cleaned by Shadow Cheats Music\n"]
+        has_login = False
+        count = 0
+        for l in lines:
+            ls = l.strip()
+            if not ls or ls.startswith("#"):
+                continue
+            parts = ls.split("\t")
+            if len(parts) >= 7:
+                if not parts[0].endswith("youtube.com"):
+                    continue
+                if parts[0].startswith("."):
+                    parts[1] = "TRUE"
+                clean.append("\t".join(parts) + "\n")
+                count += 1
+                if any(k in parts[5] for k in ["LOGIN_INFO", "__Secure-3PSID", "__Secure-1PSID", "SID"]):
+                    has_login = True
+        
+        with open(COOKIES_FILE, "w", encoding="utf-8") as f:
+            f.writelines(clean)
+            
+        if has_login and count > 0:
+            COOKIE_ARG = COOKIES_FILE
+            YTDL_OPTIONS["cookiefile"] = COOKIES_FILE
+            print(f"✅ Reloaded {count} authenticated YouTube cookies into memory!")
+            return {"status": "ok", "count": count, "has_login": True}
+        else:
+            COOKIE_ARG = None
+            YTDL_OPTIONS["cookiefile"] = None
+            return {"status": "warning", "count": count, "has_login": False, "message": "No authenticated session cookies found (SID/LOGIN_INFO)."}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 try:
     from yt_dlp.networking.impersonate import ImpersonateTarget
     CHROME_TARGET = ImpersonateTarget("chrome")
@@ -2848,6 +2885,93 @@ class MusicBot(commands.Bot):
             app.router.add_get("/api/test_pcm", test_pcm_view)
             app.router.add_get("/api/diagnose", diagnose_view)
             app.router.add_get("/api/test_play", test_play_view)
+            async def cookies_html_view(request):
+                has_cookies = bool(COOKIE_ARG and os.path.exists(COOKIE_ARG) and os.path.getsize(COOKIE_ARG) > 50)
+                badge_cls = "badge-active" if has_cookies else "badge-missing"
+                badge_txt = "🟢 Active Session Loaded" if has_cookies else "🔴 No Valid Cookies Loaded"
+                html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>🍪 YouTube Cookies Manager • SHADOW CHEATS MUSIC</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {{
+            --bg-base: #08090C;
+            --bg-surface: #101216;
+            --bg-card: #16181F;
+            --primary: #5865F2;
+            --text-main: #FFFFFF;
+            --text-muted: #8E9297;
+            --border: rgba(255, 255, 255, 0.08);
+            --radius-md: 12px;
+        }}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: 'Plus Jakarta Sans', sans-serif; }}
+        body {{ background: var(--bg-base); color: var(--text-main); padding: 40px 20px; display: flex; justify-content: center; }}
+        .container {{ max-width: 680px; width: 100%; }}
+        .card {{ background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 28px; }}
+        h1 {{ font-size: 22px; font-weight: 700; margin-bottom: 8px; }}
+        p {{ color: var(--text-muted); font-size: 14px; line-height: 1.5; margin-bottom: 20px; }}
+        .status-badge {{ display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; margin-bottom: 20px; }}
+        .badge-active {{ background: rgba(16, 185, 129, 0.15); color: #34D399; }}
+        .badge-missing {{ background: rgba(239, 68, 68, 0.15); color: #F87171; }}
+        textarea {{ width: 100%; height: 200px; background: var(--bg-base); border: 1px solid var(--border); border-radius: 8px; padding: 14px; color: #FFF; font-family: 'JetBrains Mono', monospace; font-size: 13px; resize: vertical; margin-bottom: 16px; }}
+        textarea:focus {{ outline: none; border-color: var(--primary); }}
+        .btn {{ width: 100%; background: var(--primary); color: #FFF; border: none; padding: 14px; border-radius: 8px; font-weight: 600; font-size: 15px; cursor: pointer; transition: 0.2s; }}
+        .btn:hover {{ opacity: 0.9; transform: translateY(-1px); }}
+        .instructions {{ margin-top: 24px; padding: 16px; background: rgba(255,255,255,0.02); border-radius: 8px; font-size: 13px; color: var(--text-muted); }}
+        .instructions b {{ color: #FFF; }}
+        .instructions ol {{ margin-left: 20px; margin-top: 8px; }}
+        .instructions li {{ margin-bottom: 6px; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>🍪 YouTube Cookies Manager</h1>
+            <p>Datacenter IPs require authenticated cookies to stream from YouTube without bot blocks.</p>
+            <div class="status-badge {badge_cls}">
+                {badge_txt}
+            </div>
+            <form method="POST" action="/cookies">
+                <textarea name="cookies" placeholder="Paste the complete contents of cookies.txt here..."></textarea>
+                <button type="submit" class="btn">Save & Reload Cookies</button>
+            </form>
+            <div class="instructions">
+                <b>How to get cookies in 10 seconds:</b>
+                <ol>
+                    <li>Install the free Chrome/Brave extension <b>&quot;Get cookies.txt LOCALLY&quot;</b></li>
+                    <li>Open <b>youtube.com</b> (signed in to your account)</li>
+                    <li>Click the extension icon &gt; click <b>Export</b></li>
+                    <li>Open the file, copy all text, and paste it into the box above!</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+</body>
+</html>"""
+                return web.Response(text=html, content_type="text/html")
+
+            async def cookies_post_view(request):
+                try:
+                    if request.content_type == "application/json":
+                        data = await request.json()
+                        raw = data.get("cookies", "")
+                    else:
+                        post_data = await request.post()
+                        raw = post_data.get("cookies", "")
+                    res = reload_youtube_cookies(raw)
+                    if res.get("status") == "ok":
+                        return web.Response(text=f"✅ SUCCESS: Loaded {res.get('count')} YouTube cookies. Bot detection bypassed! You can return to Discord.", content_type="text/plain")
+                    else:
+                        return web.Response(text=f"⚠️ WARNING: {res.get('message', res.get('error'))}", content_type="text/plain", status=400)
+                except Exception as ex:
+                    return web.Response(text=f"❌ ERROR: {ex}", content_type="text/plain", status=500)
+
+            app.router.add_get("/cookies", cookies_html_view)
+            app.router.add_post("/cookies", cookies_post_view)
+            app.router.add_post("/api/cookies", cookies_post_view)
             app.router.add_get("/api/sync_commands", sync_commands_api)
             app.router.add_post("/api/sync_commands", sync_commands_api)
 
@@ -2951,6 +3075,53 @@ async def cmd_sync(ctx: commands.Context):
         await msg.edit(content=f"✅ All duplicate commands purged! Single clean global tree active with **{len(synced)}** unique commands.")
     except Exception as e:
         await msg.edit(content=f"⚠️ Sync error: {e}")
+
+@bot.command(name="cookies", description="Update YouTube session cookies to bypass bot detection")
+@commands.has_permissions(administrator=True)
+async def cmd_cookies(ctx: commands.Context, *, raw_cookies: Optional[str] = None):
+    content = ""
+    if ctx.message.attachments:
+        att = ctx.message.attachments[0]
+        try:
+            content = (await att.read()).decode("utf-8", errors="ignore")
+        except Exception as ae:
+            await ctx.send(f"⚠️ Failed to read attachment: {ae}")
+            return
+    elif raw_cookies:
+        content = raw_cookies
+    else:
+        dashboard_url = "https://shadow-cheats-music-eu.onrender.com/cookies"
+        e = discord.Embed(
+            title="🍪 YouTube Cookies Setup",
+            description=(
+                f"Datacenter hosting (Render) requires authenticated cookies to stream from YouTube.\n\n"
+                f"**How to update:**\n"
+                f"1. Open [Web Cookies Manager]({dashboard_url}) to paste or upload `cookies.txt` directly\n"
+                f"2. Or type `.cookies` and attach your `cookies.txt` file here in Discord.\n\n"
+                f"**How to get cookies (10 seconds):**\n"
+                f"• Install Chrome/Brave extension `Get cookies.txt LOCALLY`\n"
+                f"• Go to `youtube.com` (logged into any Google account)\n"
+                f"• Click extension icon -> **Export** -> attach or paste here!"
+            ),
+            color=0x5865F2
+        )
+        await ctx.send(embed=e)
+        return
+
+    res = reload_youtube_cookies(content)
+    if res.get("status") == "ok":
+        e = discord.Embed(
+            title="✅ Cookies Updated & Active",
+            description=f"Successfully loaded **{res.get('count')}** YouTube cookies.\nBot detection bypassed for live streaming!",
+            color=0x57F287
+        )
+    else:
+        e = discord.Embed(
+            title="⚠️ Cookie Warning",
+            description=f"Loaded {res.get('count', 0)} lines. {res.get('message', res.get('error'))}",
+            color=0xFEE75C
+        )
+    await ctx.send(embed=e)
 
 @bot.event
 async def on_message(message: discord.Message):
