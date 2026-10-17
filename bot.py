@@ -1301,35 +1301,56 @@ class YTSource(discord.PCMVolumeTransformer):
 
         def run():
             last_err = None
-            # Tier 1: Direct extraction with sanitized cookies (web & android)
+            # Tier 1: Direct YouTube extraction via android client (Format 18 progressive MP4)
             try:
                 t1_opts = opts.copy()
-                t1_opts["cookiefile"] = COOKIE_ARG
+                t1_opts["cookiefile"] = None
                 t1_opts["extractor_args"] = {
                     "youtube": {
-                        "player_client": ["web", "android"]
+                        "player_client": ["android"]
                     }
                 }
-                return yt_dlp.YoutubeDL(t1_opts).extract_info(url, download=False)
+                res = yt_dlp.YoutubeDL(t1_opts).extract_info(url, download=False)
+                if res and res.get("url"):
+                    return res
             except Exception as e:
                 last_err = e
-                print(f"⚠️ Tier 1 (web/android) extract failed: {e}. Trying iOS & tv_embedded...")
+                print(f"⚠️ Tier 1 (android) extract failed: {e}. Trying tv_embedded...")
 
-            # Tier 2: Direct extraction without cookies (ios & tv_embedded)
+            # Tier 2: Direct YouTube extraction via tv_embedded (Format 251 Opus)
             try:
                 t2_opts = opts.copy()
                 t2_opts["cookiefile"] = None
                 t2_opts["extractor_args"] = {
                     "youtube": {
-                        "player_client": ["ios", "tv_embedded", "android"]
+                        "player_client": ["tv_embedded"]
                     }
                 }
-                return yt_dlp.YoutubeDL(t2_opts).extract_info(url, download=False)
+                res = yt_dlp.YoutubeDL(t2_opts).extract_info(url, download=False)
+                if res and res.get("url"):
+                    return res
             except Exception as e:
                 last_err = e
-                print(f"⚠️ Tier 2 (ios/tv_embedded) extract failed: {e}. Trying resilient audio fallback...")
+                print(f"⚠️ Tier 2 (tv_embedded) extract failed: {e}. Trying web with cookies...")
 
-            # Tier 3: Resilient Audio Stream Fallback for datacenter IP blocks
+            # Tier 3: Direct YouTube extraction via web client with cookies
+            if COOKIE_ARG:
+                try:
+                    t3_opts = opts.copy()
+                    t3_opts["cookiefile"] = COOKIE_ARG
+                    t3_opts["extractor_args"] = {
+                        "youtube": {
+                            "player_client": ["web"]
+                        }
+                    }
+                    res = yt_dlp.YoutubeDL(t3_opts).extract_info(url, download=False)
+                    if res and res.get("url"):
+                        return res
+                except Exception as e:
+                    last_err = e
+                    print(f"⚠️ Tier 3 (web with cookies) extract failed: {e}...")
+
+            # Tier 4: Resilient Audio Stream Fallback for datacenter IP blocks
             fallback_query = track_title or url
             if fallback_query:
                 clean_title = re.sub(r'\(Official.*?\)|\[Official.*?\]|\(Audio.*?\)|\[Audio.*?\]|\(Video.*?\)|\[Video.*?\]', '', fallback_query, flags=re.I).strip()
@@ -1339,15 +1360,17 @@ class YTSource(discord.PCMVolumeTransformer):
                     "noplaylist": True,
                     "quiet": True,
                     "no_warnings": True,
+                    "ignoreerrors": True,
                     "socket_timeout": 6,
                     "default_search": "scsearch"
                 }
                 try:
                     sc_res = yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{clean_title}", download=False)
-                    if sc_res and "entries" in sc_res and len(sc_res["entries"]) > 0:
-                        chosen = sc_res["entries"][0]
-                        print(f"✅ Fallback stream resolved instantly: {chosen.get('title')}")
-                        return chosen
+                    if sc_res and "entries" in sc_res:
+                        for chosen in sc_res["entries"]:
+                            if chosen and chosen.get("url"):
+                                print(f"✅ Fallback stream resolved instantly: {chosen.get('title')}")
+                                return chosen
                 except Exception as sc_err:
                     print(f"⚠️ Fallback stream error: {sc_err}")
 
