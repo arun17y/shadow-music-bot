@@ -319,8 +319,6 @@ if os.path.exists(COOKIES_FILE):
                     continue
                 if _parts[0].startswith("."):
                     _parts[1] = "TRUE"
-                if any(bad in _parts[5] for bad in ["PSIDTS", "SIDCC"]):
-                    continue
                 _clean_lines.append("\t".join(_parts) + "\n")
                 if any(k in _parts[5] for k in ["LOGIN_INFO", "__Secure-3PSID", "__Secure-1PSID", "SID"]):
                     has_yt_login = True
@@ -1292,65 +1290,79 @@ class YTSource(discord.PCMVolumeTransformer):
 
     @classmethod
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
-        fallback_query = track_title or url
+        vid_match = re.search(r'(?:v=|\/|youtu\.be\/)([0-9A-Za-z_-]{11})', url)
+        video_id = vid_match.group(1) if vid_match else None
 
-        async def get_yt_stream():
-            def _yt():
-                yt_opts = {
-                    "format": "18/b/best/bestaudio",
-                    "quiet": True,
-                    "no_warnings": True,
-                    "socket_timeout": 3,
-                    "retries": 0,
-                    "extractor_retries": 0,
-                    "extractor_args": {
-                        "youtube": {
-                            "player_client": ["android", "tv_embedded"]
-                        }
-                    }
+        # 1. Primary: Direct yt-dlp extraction with verified cookies
+        def _get_yt():
+            opts = YTDL_OPTIONS.copy()
+            opts["format"] = "bestaudio/18/best/b"
+            opts["noplaylist"] = True
+            opts["quiet"] = True
+            opts["no_warnings"] = True
+            opts["socket_timeout"] = 10
+            opts["retries"] = 1
+            opts["extractor_retries"] = 1
+            opts["cookiefile"] = COOKIE_ARG
+            try:
+                res = yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
+                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                    return res
+            except Exception as e:
+                print(f"⚠️ Direct yt-dlp with cookies hit: {e}. Trying no-cookies clients...")
+
+            # Secondary direct attempt without cookies (android / tv_embedded)
+            opts_no = opts.copy()
+            opts_no["cookiefile"] = None
+            opts_no["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["android", "tv_embedded"]
                 }
-                return yt_dlp.YoutubeDL(yt_opts).extract_info(url, download=False)
-            return await loop.run_in_executor(None, _yt)
+            }
+            try:
+                return yt_dlp.YoutubeDL(opts_no).extract_info(url, download=False)
+            except Exception as e2:
+                print(f"⚠️ Direct yt-dlp guest extract hit: {e2}...")
+            return None
 
-        data = None
-        # Attempt 1: Fast direct YouTube extraction with a strict 2.5s timeout
-        try:
-            yt_res = await asyncio.wait_for(get_yt_stream(), timeout=2.5)
-            if yt_res:
-                if "entries" in yt_res and len(yt_res["entries"]) > 0:
-                    yt_res = yt_res["entries"][0]
-                if yt_res.get("url"):
-                    data = yt_res
-                    print(f"⚡ YouTube original stream extracted in record time: {data.get('title')}")
-        except Exception as yt_err:
-            print(f"ℹ️ YouTube direct attempt timed out or blocked ({yt_err}). Seamless audio fallback activating...")
+        data = await loop.run_in_executor(None, _get_yt)
+        if data and "entries" in data and len(data["entries"]) > 0:
+            data = data["entries"][0]
 
-        # Attempt 2: If YouTube direct is blocked by datacenter IP rules or timed out, resolve instantly via high-fidelity mirror
-        if not data:
-            clean_title = re.sub(r'\(Official.*?\)|\[Official.*?\]|\(Audio.*?\)|\[Audio.*?\]|\(Video.*?\)|\[Video.*?\]', '', fallback_query, flags=re.I).strip()
-            def _sc():
-                sc_opts = {
-                    "format": "bestaudio/best",
-                    "noplaylist": True,
-                    "quiet": True,
-                    "no_warnings": True,
-                    "ignoreerrors": True,
-                    "socket_timeout": 5,
-                    "default_search": "scsearch"
-                }
-                res = yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{clean_title}", download=False)
-                if res and "entries" in res:
-                    for e in res["entries"]:
-                        if e and e.get("url"):
-                            return e
-                return None
+        # 2. Resilient Stream Fallback: If YouTube datacenter IP block triggers on Render,
+        # resolve the EXACT SAME YouTube video ID via Invidious for the genuine googlevideo stream!
+        if (not data or not data.get("url")) and video_id:
+            print(f"🔄 Resolving exact YouTube video {video_id} via mirror...")
+            invidious_endpoints = [
+                f"https://invidious.f5.si/api/v1/videos/{video_id}",
+                f"https://inv.nadeko.net/api/v1/videos/{video_id}",
+                f"https://invidious.nerdvpn.de/api/v1/videos/{video_id}",
+                f"https://yt.artemislena.eu/api/v1/videos/{video_id}"
+            ]
+            async with aiohttp.ClientSession() as session:
+                for ep in invidious_endpoints:
+                    try:
+                        async with session.get(ep, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+                            if resp.status == 200:
+                                v_info = await resp.json()
+                                afmts = [f for f in v_info.get("adaptiveFormats", []) if "audio" in f.get("type", "") and f.get("url")]
+                                if afmts:
+                                    best_af = afmts[0]
+                                    data = {
+                                        "url": best_af["url"],
+                                        "title": v_info.get("title", track_title or "YouTube Audio"),
+                                        "duration": v_info.get("lengthSeconds", 0),
+                                        "thumbnail": (v_info.get("videoThumbnails") or [{}])[0].get("url", ""),
+                                        "uploader": v_info.get("author", "YouTube"),
+                                        "webpage_url": f"https://www.youtube.com/watch?v={video_id}"
+                                    }
+                                    print(f"✅ Exact YouTube stream resolved via mirror: {data['title']}")
+                                    break
+                    except Exception:
+                        continue
 
-            data = await loop.run_in_executor(None, _sc)
-            if data:
-                print(f"✅ Instant audio stream resolved: {data.get('title')}")
-
-        if not data:
-            raise Exception(f"Could not extract playable audio stream for {url}")
+        if not data or not data.get("url"):
+            raise Exception(f"Could not extract playable YouTube audio stream for {url}")
 
         stream_url = data.get("url") if data else None
         if not stream_url:
@@ -1386,7 +1398,7 @@ class GuildPlayer:
         self.queue = deque()
         self.history = deque(maxlen=30)
         self.current: Optional[dict] = None
-        self.voice: Optional[discord.VoiceClient] = None
+        self._voice: Optional[discord.VoiceClient] = None
         self.volume = 1.0
         self.loop = "off"  # "off", "track", "queue"
         self.autoplay = False
@@ -1407,6 +1419,23 @@ class GuildPlayer:
         self.inactive_since: Optional[float] = None
         self.is_connecting = False
         self.skip_votes = set()
+
+    @property
+    def voice(self) -> Optional[discord.VoiceClient]:
+        if hasattr(self, "_voice") and self._voice and self._voice.is_connected() and getattr(self._voice, "guild", None) and self._voice.guild.id == self.guild_id:
+            return self._voice
+        g = bot.get_guild(self.guild_id)
+        if g and g.voice_client and g.voice_client.is_connected():
+            self._voice = g.voice_client
+            return self._voice
+        return None
+
+    @voice.setter
+    def voice(self, val):
+        if val is None:
+            self._voice = None
+        elif getattr(val, "guild", None) and val.guild.id == self.guild_id:
+            self._voice = val
 
     @property
     def position(self):
@@ -2920,11 +2949,13 @@ async def check_voice_channels():
 
 async def ensure_vc(ctx: commands.Context) -> Optional[discord.VoiceClient]:
     p = bot.get_player(ctx.guild.id)
-    p.text_ch = ctx.channel
-    if not ctx.author.voice or not ctx.author.voice.channel:
+    if hasattr(ctx, "channel") and ctx.channel:
+        p.text_ch = ctx.channel
+    author = getattr(ctx, "author", None) or getattr(ctx, "user", None)
+    if not author or not getattr(author, "voice", None) or not author.voice.channel:
         await send_response(ctx, embed=err("You must join a voice channel first!"))
         return None
-    ch = ctx.author.voice.channel
+    ch = author.voice.channel
 
     # Check guild voice client in discord.py
     existing_vc = ctx.guild.voice_client
