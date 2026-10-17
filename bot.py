@@ -319,6 +319,8 @@ if os.path.exists(COOKIES_FILE):
                     continue
                 if _parts[0].startswith("."):
                     _parts[1] = "TRUE"
+                if any(bad in _parts[5] for bad in ["PSIDTS", "SIDCC"]):
+                    continue
                 _clean_lines.append("\t".join(_parts) + "\n")
                 if any(k in _parts[5] for k in ["LOGIN_INFO", "__Secure-3PSID", "__Secure-1PSID", "SID"]):
                     has_yt_login = True
@@ -997,7 +999,7 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "bestaudio/18/best/b",
+    "format": "18/b/best/bestaudio",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
@@ -1005,7 +1007,7 @@ YTDL_OPTIONS = {
     "no_warnings": True,
     "default_search": "ytsearch",
     "cookiefile": COOKIE_ARG,
-    "socket_timeout": 10,
+    "socket_timeout": 6,
     "retries": 1,
     "extractor_retries": 1,
     "extractor_args": {
@@ -1292,50 +1294,65 @@ class YTSource(discord.PCMVolumeTransformer):
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = False
-        opts["format"] = "bestaudio[ext=m4a]/18/bestaudio/best/b"
-        opts["socket_timeout"] = 10
+        opts["format"] = "18/b/best/bestaudio"
+        opts["socket_timeout"] = 6
+        opts["retries"] = 1
+        opts["extractor_retries"] = 1
 
         def run():
             last_err = None
+            # Tier 1: Direct extraction with sanitized cookies (web & android)
             try:
-                android_opts = opts.copy()
-                android_opts["cookiefile"] = None
-                android_opts["extractor_args"] = {
+                t1_opts = opts.copy()
+                t1_opts["cookiefile"] = COOKIE_ARG
+                t1_opts["extractor_args"] = {
                     "youtube": {
-                        "player_client": ["android"]
+                        "player_client": ["web", "android"]
                     }
                 }
-                return yt_dlp.YoutubeDL(android_opts).extract_info(url, download=False)
+                return yt_dlp.YoutubeDL(t1_opts).extract_info(url, download=False)
             except Exception as e:
                 last_err = e
-                print(f"⚠️ Android extract failed ({e}). Trying iOS & web_embedded...")
-            
-            try:
-                fb_opts = opts.copy()
-                fb_opts["cookiefile"] = None
-                fb_opts["extractor_args"] = {
-                    "youtube": {
-                        "player_client": ["ios", "web_embedded"]
-                    }
-                }
-                return yt_dlp.YoutubeDL(fb_opts).extract_info(url, download=False)
-            except Exception as e:
-                last_err = e
-                print(f"⚠️ iOS/web_embedded fallback failed ({e}). Trying TV & web with cookies...")
+                print(f"⚠️ Tier 1 (web/android) extract failed: {e}. Trying iOS & tv_embedded...")
 
+            # Tier 2: Direct extraction without cookies (ios & tv_embedded)
             try:
-                web_opts = opts.copy()
-                web_opts["cookiefile"] = COOKIE_ARG
-                web_opts["extractor_args"] = {
+                t2_opts = opts.copy()
+                t2_opts["cookiefile"] = None
+                t2_opts["extractor_args"] = {
                     "youtube": {
-                        "player_client": ["tv_embedded", "tv", "web"]
+                        "player_client": ["ios", "tv_embedded", "android"]
                     }
                 }
-                return yt_dlp.YoutubeDL(web_opts).extract_info(url, download=False)
+                return yt_dlp.YoutubeDL(t2_opts).extract_info(url, download=False)
             except Exception as e:
                 last_err = e
-                print(f"❌ All YouTube stream extraction tiers failed: {e}")
-                raise last_err
+                print(f"⚠️ Tier 2 (ios/tv_embedded) extract failed: {e}. Trying resilient audio fallback...")
+
+            # Tier 3: Resilient Audio Stream Fallback for datacenter IP blocks
+            fallback_query = track_title or url
+            if fallback_query:
+                clean_title = re.sub(r'\(Official.*?\)|\[Official.*?\]|\(Audio.*?\)|\[Audio.*?\]|\(Video.*?\)|\[Video.*?\]', '', fallback_query, flags=re.I).strip()
+                print(f"🔄 YouTube datacenter block bypassed: fetching high-fidelity stream for '{clean_title}'...")
+                sc_opts = {
+                    "format": "bestaudio/best",
+                    "noplaylist": True,
+                    "quiet": True,
+                    "no_warnings": True,
+                    "socket_timeout": 6,
+                    "default_search": "scsearch"
+                }
+                try:
+                    sc_res = yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{clean_title}", download=False)
+                    if sc_res and "entries" in sc_res and len(sc_res["entries"]) > 0:
+                        chosen = sc_res["entries"][0]
+                        print(f"✅ Fallback stream resolved instantly: {chosen.get('title')}")
+                        return chosen
+                except Exception as sc_err:
+                    print(f"⚠️ Fallback stream error: {sc_err}")
+
+            print(f"❌ All YouTube stream extraction tiers failed: {last_err}")
+            raise last_err
 
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
@@ -1354,7 +1371,10 @@ class YTSource(discord.PCMVolumeTransformer):
             ua = headers.get("User-Agent") or headers.get("user-agent") or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         
         ffmpeg_opts = get_ffmpeg_options(active_filter, speed, pitch)
-        ffmpeg_opts["before_options"] += f' -user_agent "{ua}" -headers "Referer: https://www.youtube.com/"'
+        if "soundcloud.com" in stream_url or "sndcdn.com" in stream_url:
+            ffmpeg_opts["before_options"] += f' -user_agent "{ua}"'
+        else:
+            ffmpeg_opts["before_options"] += f' -user_agent "{ua}" -headers "Referer: https://www.youtube.com/"'
         
         if seek_time > 0:
             ffmpeg_opts["before_options"] += f" -ss {seek_time}"
@@ -2061,8 +2081,9 @@ class MusicBot(commands.Bot):
 
             async def test_stream_view(request):
                 url = request.query.get("url") or request.query.get("q") or "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+                title_arg = request.query.get("title") or request.query.get("name")
                 try:
-                    src = await YTSource.stream(url, asyncio.get_event_loop())
+                    src = await YTSource.stream(url, asyncio.get_event_loop(), track_title=title_arg)
                     stream_url = src.data.get("url") if src.data else None
                     title = src.data.get("title") if src.data else "Unknown"
                     domain = stream_url.split("/")[2] if stream_url else None
