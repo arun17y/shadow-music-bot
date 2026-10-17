@@ -1004,17 +1004,27 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": None,
-    "socket_timeout": 8,
-    "retries": 1,
-    "extractor_retries": 1,
-    "js_runtimes": {"node": {}},
-    "extractor_args": {
-        "youtube": {
-            "player_client": ["android", "ios"]
-        }
-    },
+    "cookiefile": COOKIE_ARG,
+    "socket_timeout": 15,
+    "retries": 2,
+    "extractor_retries": 2,
+    "js_runtimes": {"node": {}, "deno": {}},
 }
+
+def get_po_token(video_id: str = "") -> dict:
+    try:
+        import urllib.request, json
+        req = urllib.request.Request(
+            "http://127.0.0.1:4416/get_pot",
+            data=json.dumps({"content_binding": video_id, "bypass_cache": False}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            if resp.status == 200:
+                return json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        pass
+    return {}
 
 # ─────────────────────────────────────────────
 #                 EMBED HELPERS (MODERN UI)
@@ -1292,24 +1302,46 @@ class YTSource(discord.PCMVolumeTransformer):
     @classmethod
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         def _get_yt():
-            # 1. Primary: Direct Android mobile client (format 18 AAC)
+            vid_id = ""
+            vid_m = re.search(r'(?:v=|\/|youtu\.be\/)([0-9A-Za-z_-]{11})', url)
+            if vid_m:
+                vid_id = vid_m.group(1)
+
+            pot_info = get_po_token(vid_id)
+            pot_token = pot_info.get("poToken")
+
             opts = YTDL_OPTIONS.copy()
             opts["format"] = "bestaudio/18/b/best"
-            opts["cookiefile"] = None
-            opts["extractor_args"] = {
-                "youtube": {
-                    "player_client": ["android", "ios"]
+            if COOKIE_ARG and os.path.exists(COOKIE_ARG) and os.path.getsize(COOKIE_ARG) > 50:
+                opts["cookiefile"] = COOKIE_ARG
+            else:
+                opts["cookiefile"] = None
+
+            if pot_token:
+                opts["extractor_args"] = {
+                    "youtube": {
+                        "po_token": [f"web+{pot_token}", f"mweb+{pot_token}"]
+                    }
                 }
-            }
             try:
                 res = yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
                     return res
             except Exception as e:
-                print(f"⚠️ Primary Android extract hit: {e}. Trying tv_embedded client...")
+                print(f"⚠️ Primary extract hit: {e}. Trying fallback...")
 
-            # 2. Secondary: TV embedded client
+            if opts.get("cookiefile"):
+                opts_noc = opts.copy()
+                opts_noc["cookiefile"] = None
+                try:
+                    res = yt_dlp.YoutubeDL(opts_noc).extract_info(url, download=False)
+                    if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                        return res
+                except Exception as e_noc:
+                    print(f"⚠️ No-cookie fallback hit: {e_noc}. Trying TV client...")
+
             opts_tv = opts.copy()
+            opts_tv["cookiefile"] = None
             opts_tv["extractor_args"] = {
                 "youtube": {
                     "player_client": ["tv_embedded", "tv"]
@@ -1320,17 +1352,19 @@ class YTSource(discord.PCMVolumeTransformer):
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
                     return res
             except Exception as e2:
-                print(f"⚠️ TV extract hit: {e2}. Trying web_embedded...")
+                print(f"⚠️ TV extract hit: {e2}. Trying iOS client...")
 
-            # 3. Tertiary: Web embedded client
-            opts_web = opts.copy()
-            opts_web["extractor_args"] = {
+            opts_ios = opts.copy()
+            opts_ios["cookiefile"] = None
+            opts_ios["extractor_args"] = {
                 "youtube": {
-                    "player_client": ["web_embedded", "mweb"]
+                    "player_client": ["ios", "android_vr"]
                 }
             }
             try:
-                return yt_dlp.YoutubeDL(opts_web).extract_info(url, download=False)
+                res = yt_dlp.YoutubeDL(opts_ios).extract_info(url, download=False)
+                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                    return res
             except Exception as e3:
                 print(f"❌ All direct YouTube stream extractions failed: {e3}")
             return None
