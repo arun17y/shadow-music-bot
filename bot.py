@@ -1331,9 +1331,9 @@ class YTSource(discord.PCMVolumeTransformer):
             async with aiohttp.ClientSession() as session:
                 for ep in invidious_endpoints:
                     try:
-                        async with session.get(ep, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}, timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                        async with session.get(ep, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}, timeout=aiohttp.ClientTimeout(total=8)) as resp:
                             if resp.status == 200:
-                                v_info = await resp.json()
+                                v_info = await resp.json(content_type=None)
                                 afmts = [f for f in v_info.get("adaptiveFormats", []) if "audio" in f.get("type", "") and f.get("url")]
                                 if afmts:
                                     best_af = afmts[0]
@@ -1345,9 +1345,12 @@ class YTSource(discord.PCMVolumeTransformer):
                                         "uploader": v_info.get("author", "YouTube"),
                                         "webpage_url": f"https://www.youtube.com/watch?v={video_id}"
                                     }
-                                    print(f"✅ Exact YouTube stream resolved via mirror: {data['title']}")
+                                    print(f"✅ Exact YouTube stream resolved via mirror {ep}: {data['title']}")
                                     break
-                    except Exception:
+                            else:
+                                print(f"⚠️ Mirror HTTP {resp.status} on {ep}")
+                    except Exception as m_ex:
+                        print(f"⚠️ Mirror error on {ep}: {m_ex}")
                         continue
 
         if not data or not data.get("url"):
