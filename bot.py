@@ -997,7 +997,7 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "bestaudio[ext=m4a]/bestaudio/best[ext=webm]/best/bestvideo+bestaudio",
+    "format": "bestaudio/18/b/best",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
@@ -1010,8 +1010,8 @@ YTDL_OPTIONS = {
     "extractor_retries": 1,
     "js_runtimes": {"node": {}, "deno": {}},
     "extractor_args": {
-        "youtubepot-bgutilhttp": {
-            "base_url": ["http://127.0.0.1:4416"]
+        "youtube": {
+            "player_client": ["android", "ios"]
         }
     },
 }
@@ -1291,25 +1291,14 @@ class YTSource(discord.PCMVolumeTransformer):
 
     @classmethod
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
-        vid_match = re.search(r'(?:v=|\/|youtu\.be\/)([0-9A-Za-z_-]{11})', url)
-        video_id = vid_match.group(1) if vid_match else None
-
-        # 1. Primary: Direct yt-dlp extraction with PO Token daemon (port 4416)
         def _get_yt():
-            # Tier 1: With cookies + PO Token daemon
+            # 1. Primary: Direct Android mobile client (bypasses bot checks, returns direct googlevideo stream on host IP)
             opts = YTDL_OPTIONS.copy()
-            opts["format"] = "bestaudio[ext=m4a]/bestaudio/best[ext=webm]/best/bestvideo+bestaudio"
-            opts["noplaylist"] = True
-            opts["quiet"] = True
-            opts["no_warnings"] = True
-            opts["socket_timeout"] = 5
-            opts["retries"] = 1
-            opts["extractor_retries"] = 1
-            opts["cookiefile"] = COOKIE_ARG
-            opts["js_runtimes"] = {"node": {}, "deno": {}}
+            opts["format"] = "bestaudio/18/b/best"
+            opts["cookiefile"] = None
             opts["extractor_args"] = {
-                "youtubepot-bgutilhttp": {
-                    "base_url": ["http://127.0.0.1:4416"]
+                "youtube": {
+                    "player_client": ["android", "ios"]
                 }
             }
             try:
@@ -1317,75 +1306,42 @@ class YTSource(discord.PCMVolumeTransformer):
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
                     return res
             except Exception as e:
-                print(f"⚠️ Direct yt-dlp with cookies hit: {e}. Trying PO Token without cookies...")
+                print(f"⚠️ Primary Android extract hit: {e}. Trying tv_embedded client...")
 
-            # Tier 2: Anonymous Visitor + PO Token daemon (bypasses bot check when cookies are expired)
-            opts_guest = opts.copy()
-            opts_guest["cookiefile"] = None
-            try:
-                res = yt_dlp.YoutubeDL(opts_guest).extract_info(url, download=False)
-                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                    return res
-            except Exception as e2:
-                print(f"⚠️ PO Token guest extract hit: {e2}. Trying mobile client...")
-
-            # Tier 3: Mobile Android client
-            opts_mobile = opts.copy()
-            opts_mobile["cookiefile"] = None
-            opts_mobile["extractor_args"] = {
+            # 2. Secondary: TV embedded client
+            opts_tv = opts.copy()
+            opts_tv["extractor_args"] = {
                 "youtube": {
-                    "player_client": ["android", "ios"]
+                    "player_client": ["tv_embedded", "tv"]
                 }
             }
             try:
-                return yt_dlp.YoutubeDL(opts_mobile).extract_info(url, download=False)
+                res = yt_dlp.YoutubeDL(opts_tv).extract_info(url, download=False)
+                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                    return res
+            except Exception as e2:
+                print(f"⚠️ TV extract hit: {e2}. Trying web with POT...")
+
+            # 3. Tertiary: Web client with PO Token daemon
+            opts_pot = opts.copy()
+            opts_pot["extractor_args"] = {
+                "youtube": {
+                    "fetch_pot": ["always"],
+                    "player_client": ["web", "mweb"]
+                },
+                "youtubepot-bgutilhttp": {
+                    "base_url": ["http://127.0.0.1:4416"]
+                }
+            }
+            try:
+                return yt_dlp.YoutubeDL(opts_pot).extract_info(url, download=False)
             except Exception as e3:
-                print(f"⚠️ Mobile client extract hit: {e3}...")
+                print(f"❌ All direct YouTube stream extractions failed: {e3}")
             return None
 
-        data = None
-        try:
-            data = await asyncio.wait_for(loop.run_in_executor(None, _get_yt), timeout=12.0)
-        except Exception:
-            pass
-
+        data = await loop.run_in_executor(None, _get_yt)
         if data and "entries" in data and len(data["entries"]) > 0:
             data = data["entries"][0]
-
-        # 2. Resilient Stream Fallback: If YouTube datacenter IP block triggers on Render,
-        # resolve the EXACT SAME YouTube video ID via Invidious for the genuine googlevideo stream!
-        if (not data or not data.get("url")) and video_id:
-            print(f"🔄 Resolving exact YouTube video {video_id} via mirror...")
-            invidious_endpoints = [
-                f"https://invidious.f5.si/api/v1/videos/{video_id}",
-                f"https://inv.nadeko.net/api/v1/videos/{video_id}",
-                f"https://invidious.nerdvpn.de/api/v1/videos/{video_id}",
-                f"https://yt.artemislena.eu/api/v1/videos/{video_id}"
-            ]
-            async with aiohttp.ClientSession() as session:
-                for ep in invidious_endpoints:
-                    try:
-                        async with session.get(ep, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}, timeout=aiohttp.ClientTimeout(total=8)) as resp:
-                            if resp.status == 200:
-                                v_info = await resp.json(content_type=None)
-                                afmts = [f for f in v_info.get("adaptiveFormats", []) if "audio" in f.get("type", "") and f.get("url")]
-                                if afmts:
-                                    best_af = afmts[0]
-                                    data = {
-                                        "url": best_af["url"],
-                                        "title": v_info.get("title", track_title or "YouTube Audio"),
-                                        "duration": v_info.get("lengthSeconds", 0),
-                                        "thumbnail": (v_info.get("videoThumbnails") or [{}])[0].get("url", ""),
-                                        "uploader": v_info.get("author", "YouTube"),
-                                        "webpage_url": f"https://www.youtube.com/watch?v={video_id}"
-                                    }
-                                    print(f"✅ Exact YouTube stream resolved via mirror {ep}: {data['title']}")
-                                    break
-                            else:
-                                print(f"⚠️ Mirror HTTP {resp.status} on {ep}")
-                    except Exception as m_ex:
-                        print(f"⚠️ Mirror error on {ep}: {m_ex}")
-                        continue
 
         if not data or not data.get("url"):
             raise Exception(f"Could not extract playable YouTube audio stream for {url}")
@@ -1399,14 +1355,13 @@ class YTSource(discord.PCMVolumeTransformer):
             ua = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
         elif "c=ANDROID" in stream_url:
             ua = "com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip"
+        elif "c=IOS" in stream_url:
+            ua = "com.google.ios.youtube/19.29.1 (iPhone14,3; U; CPU iOS 17_5_1 like Mac OS X; en_US)"
         else:
             ua = headers.get("User-Agent") or headers.get("user-agent") or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         
         ffmpeg_opts = get_ffmpeg_options(active_filter, speed, pitch)
-        if "soundcloud.com" in stream_url or "sndcdn.com" in stream_url:
-            ffmpeg_opts["before_options"] += f' -user_agent "{ua}"'
-        else:
-            ffmpeg_opts["before_options"] += f' -user_agent "{ua}" -headers "Referer: https://www.youtube.com/"'
+        ffmpeg_opts["before_options"] += f' -user_agent "{ua}"'
         
         if seek_time > 0:
             ffmpeg_opts["before_options"] += f" -ss {seek_time}"
