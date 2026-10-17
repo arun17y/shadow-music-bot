@@ -5,4 +5,5 @@ PyNaCl
 aiohttp
 psutil
 davey
+bgutil-ytdlp-pot-provider>=2.0.2
 

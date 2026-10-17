@@ -219,13 +219,13 @@ sys.stderr = OutputTee(sys.stderr)
 #             DEPENDENCY AUTO-INSTALLER
 # ─────────────────────────────────────────────
 
-REQUIRED = ["discord.py>=2.3.0", "yt-dlp", "PyNaCl", "aiohttp", "psutil", "davey"]
+REQUIRED = ["discord.py>=2.3.0", "yt-dlp", "PyNaCl", "aiohttp", "psutil", "davey", "bgutil-ytdlp-pot-provider>=2.0.2"]
 
 def auto_install():
     missing = []
     for pkg in REQUIRED:
         name = pkg.split(">=")[0]
-        import_name = {"discord.py": "discord", "PyNaCl": "nacl"}.get(name, name.replace("-", "_"))
+        import_name = {"discord.py": "discord", "PyNaCl": "nacl", "bgutil-ytdlp-pot-provider": "yt_dlp_plugins.extractor.getpot_bgutil_http"}.get(name, name.replace("-", "_"))
         try:
             importlib.import_module(import_name)
         except ImportError:
@@ -1005,10 +1005,15 @@ YTDL_OPTIONS = {
     "no_warnings": True,
     "default_search": "ytsearch",
     "cookiefile": COOKIE_ARG,
-    "socket_timeout": 5,
+    "socket_timeout": 8,
     "retries": 1,
     "extractor_retries": 1,
-    "js_runtimes": {"node": {}},
+    "js_runtimes": {"node": {}, "deno": {}},
+    "extractor_args": {
+        "youtubepot-bgutilhttp": {
+            "base_url": ["http://127.0.0.1:4416"]
+        }
+    },
 }
 
 # ─────────────────────────────────────────────
@@ -1289,29 +1294,58 @@ class YTSource(discord.PCMVolumeTransformer):
         vid_match = re.search(r'(?:v=|\/|youtu\.be\/)([0-9A-Za-z_-]{11})', url)
         video_id = vid_match.group(1) if vid_match else None
 
-        # 1. Primary: Direct yt-dlp extraction with verified cookies (capped at 2.5s)
+        # 1. Primary: Direct yt-dlp extraction with PO Token daemon (port 4416)
         def _get_yt():
+            # Tier 1: With cookies + PO Token daemon
             opts = YTDL_OPTIONS.copy()
             opts["format"] = "bestaudio[ext=m4a]/bestaudio/best[ext=webm]/best/bestvideo+bestaudio"
             opts["noplaylist"] = True
             opts["quiet"] = True
             opts["no_warnings"] = True
-            opts["socket_timeout"] = 3
-            opts["retries"] = 0
-            opts["extractor_retries"] = 0
+            opts["socket_timeout"] = 5
+            opts["retries"] = 1
+            opts["extractor_retries"] = 1
             opts["cookiefile"] = COOKIE_ARG
-            opts["js_runtimes"] = {"node": {}}
+            opts["js_runtimes"] = {"node": {}, "deno": {}}
+            opts["extractor_args"] = {
+                "youtubepot-bgutilhttp": {
+                    "base_url": ["http://127.0.0.1:4416"]
+                }
+            }
             try:
                 res = yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
                     return res
             except Exception as e:
-                print(f"⚠️ Direct yt-dlp hit: {e}. Falling back to instant mirror...")
+                print(f"⚠️ Direct yt-dlp with cookies hit: {e}. Trying PO Token without cookies...")
+
+            # Tier 2: Anonymous Visitor + PO Token daemon (bypasses bot check when cookies are expired)
+            opts_guest = opts.copy()
+            opts_guest["cookiefile"] = None
+            try:
+                res = yt_dlp.YoutubeDL(opts_guest).extract_info(url, download=False)
+                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                    return res
+            except Exception as e2:
+                print(f"⚠️ PO Token guest extract hit: {e2}. Trying mobile client...")
+
+            # Tier 3: Mobile Android client
+            opts_mobile = opts.copy()
+            opts_mobile["cookiefile"] = None
+            opts_mobile["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["android", "ios"]
+                }
+            }
+            try:
+                return yt_dlp.YoutubeDL(opts_mobile).extract_info(url, download=False)
+            except Exception as e3:
+                print(f"⚠️ Mobile client extract hit: {e3}...")
             return None
 
         data = None
         try:
-            data = await asyncio.wait_for(loop.run_in_executor(None, _get_yt), timeout=2.5)
+            data = await asyncio.wait_for(loop.run_in_executor(None, _get_yt), timeout=12.0)
         except Exception:
             pass
 
