@@ -219,13 +219,13 @@ sys.stderr = OutputTee(sys.stderr)
 #             DEPENDENCY AUTO-INSTALLER
 # ─────────────────────────────────────────────
 
-REQUIRED = ["discord.py>=2.3.0", "yt-dlp", "PyNaCl", "aiohttp", "psutil", "davey", "bgutil-ytdlp-pot-provider>=2.0.2"]
+REQUIRED = ["discord.py>=2.3.0", "yt-dlp", "PyNaCl", "aiohttp", "psutil", "davey"]
 
 def auto_install():
     missing = []
     for pkg in REQUIRED:
         name = pkg.split(">=")[0]
-        import_name = {"discord.py": "discord", "PyNaCl": "nacl", "bgutil-ytdlp-pot-provider": "yt_dlp_plugins.extractor.getpot_bgutil_http"}.get(name, name.replace("-", "_"))
+        import_name = {"discord.py": "discord", "PyNaCl": "nacl"}.get(name, name.replace("-", "_"))
         try:
             importlib.import_module(import_name)
         except ImportError:
