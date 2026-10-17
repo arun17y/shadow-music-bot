@@ -1019,11 +1019,13 @@ def get_po_token(video_id: str = "") -> dict:
             data=json.dumps({"content_binding": video_id, "bypass_cache": False}).encode("utf-8"),
             headers={"Content-Type": "application/json"}
         )
-        with urllib.request.urlopen(req, timeout=1.5) as resp:
+        with urllib.request.urlopen(req, timeout=10.0) as resp:
             if resp.status == 200:
-                return json.loads(resp.read().decode("utf-8"))
-    except Exception:
-        pass
+                data = json.loads(resp.read().decode("utf-8"))
+                print(f"✅ Successfully acquired PO Token from bgutil-pot: {list(data.keys())}")
+                return data
+    except Exception as ex:
+        print(f"⚠️ get_po_token error: {ex}")
     return {}
 
 # ─────────────────────────────────────────────
@@ -2655,6 +2657,32 @@ class MusicBot(commands.Bot):
                 except Exception as e:
                     return web.json_response({"status": "error", "error": str(e)}, status=500)
 
+            async def test_pot_view(request):
+                vid = request.query.get("v", "DLlXI1-_o7Y")
+                ping_ok = False
+                try:
+                    async with aiohttp.ClientSession() as sess:
+                        async with sess.get("http://127.0.0.1:4416/ping", timeout=1.0) as resp:
+                            ping_ok = (resp.status == 200)
+                except Exception as pe:
+                    ping_ok = str(pe)
+
+                pot_res = {}
+                pot_err = None
+                try:
+                    pot_res = get_po_token(vid)
+                except Exception as ge:
+                    pot_err = str(ge)
+
+                return web.json_response({
+                    "status": "ok",
+                    "video_id": vid,
+                    "ping": ping_ok,
+                    "has_token": bool(pot_res.get("poToken")),
+                    "token_keys": list(pot_res.keys()),
+                    "error": pot_err
+                })
+
             app.router.add_get("/", root_view)
             app.router.add_get("/api/health", health_check)
             app.router.add_get("/health", health_check)
@@ -2662,6 +2690,7 @@ class MusicBot(commands.Bot):
             app.router.add_get("/api/logs", logs_view)
             app.router.add_get("/api/test_extract", test_extract_view)
             app.router.add_get("/api/test_stream", test_stream_view)
+            app.router.add_get("/api/test_pot", test_pot_view)
             app.router.add_get("/api/formats", formats_view)
             app.router.add_get("/api/test_pcm", test_pcm_view)
             app.router.add_get("/api/diagnose", diagnose_view)
