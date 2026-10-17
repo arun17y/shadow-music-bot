@@ -1292,95 +1292,66 @@ class YTSource(discord.PCMVolumeTransformer):
 
     @classmethod
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
-        opts = YTDL_OPTIONS.copy()
-        opts["extract_flat"] = False
-        opts["format"] = "18/b/best/bestaudio"
-        opts["socket_timeout"] = 6
-        opts["retries"] = 1
-        opts["extractor_retries"] = 1
+        fallback_query = track_title or url
 
-        def run():
-            last_err = None
-            # Tier 1: Direct YouTube extraction via android client (Format 18 progressive MP4)
-            try:
-                t1_opts = opts.copy()
-                t1_opts["cookiefile"] = None
-                t1_opts["extractor_args"] = {
-                    "youtube": {
-                        "player_client": ["android"]
-                    }
-                }
-                res = yt_dlp.YoutubeDL(t1_opts).extract_info(url, download=False)
-                if res and res.get("url"):
-                    return res
-            except Exception as e:
-                last_err = e
-                print(f"⚠️ Tier 1 (android) extract failed: {e}. Trying tv_embedded...")
-
-            # Tier 2: Direct YouTube extraction via tv_embedded (Format 251 Opus)
-            try:
-                t2_opts = opts.copy()
-                t2_opts["cookiefile"] = None
-                t2_opts["extractor_args"] = {
-                    "youtube": {
-                        "player_client": ["tv_embedded"]
-                    }
-                }
-                res = yt_dlp.YoutubeDL(t2_opts).extract_info(url, download=False)
-                if res and res.get("url"):
-                    return res
-            except Exception as e:
-                last_err = e
-                print(f"⚠️ Tier 2 (tv_embedded) extract failed: {e}. Trying web with cookies...")
-
-            # Tier 3: Direct YouTube extraction via web client with cookies
-            if COOKIE_ARG:
-                try:
-                    t3_opts = opts.copy()
-                    t3_opts["cookiefile"] = COOKIE_ARG
-                    t3_opts["extractor_args"] = {
+        async def get_yt_stream():
+            def _yt():
+                yt_opts = {
+                    "format": "18/b/best/bestaudio",
+                    "quiet": True,
+                    "no_warnings": True,
+                    "socket_timeout": 3,
+                    "retries": 0,
+                    "extractor_retries": 0,
+                    "extractor_args": {
                         "youtube": {
-                            "player_client": ["web"]
+                            "player_client": ["android", "tv_embedded"]
                         }
                     }
-                    res = yt_dlp.YoutubeDL(t3_opts).extract_info(url, download=False)
-                    if res and res.get("url"):
-                        return res
-                except Exception as e:
-                    last_err = e
-                    print(f"⚠️ Tier 3 (web with cookies) extract failed: {e}...")
+                }
+                return yt_dlp.YoutubeDL(yt_opts).extract_info(url, download=False)
+            return await loop.run_in_executor(None, _yt)
 
-            # Tier 4: Resilient Audio Stream Fallback for datacenter IP blocks
-            fallback_query = track_title or url
-            if fallback_query:
-                clean_title = re.sub(r'\(Official.*?\)|\[Official.*?\]|\(Audio.*?\)|\[Audio.*?\]|\(Video.*?\)|\[Video.*?\]', '', fallback_query, flags=re.I).strip()
-                print(f"🔄 YouTube datacenter block bypassed: fetching high-fidelity stream for '{clean_title}'...")
+        data = None
+        # Attempt 1: Fast direct YouTube extraction with a strict 2.5s timeout
+        try:
+            yt_res = await asyncio.wait_for(get_yt_stream(), timeout=2.5)
+            if yt_res:
+                if "entries" in yt_res and len(yt_res["entries"]) > 0:
+                    yt_res = yt_res["entries"][0]
+                if yt_res.get("url"):
+                    data = yt_res
+                    print(f"⚡ YouTube original stream extracted in record time: {data.get('title')}")
+        except Exception as yt_err:
+            print(f"ℹ️ YouTube direct attempt timed out or blocked ({yt_err}). Seamless audio fallback activating...")
+
+        # Attempt 2: If YouTube direct is blocked by datacenter IP rules or timed out, resolve instantly via high-fidelity mirror
+        if not data:
+            clean_title = re.sub(r'\(Official.*?\)|\[Official.*?\]|\(Audio.*?\)|\[Audio.*?\]|\(Video.*?\)|\[Video.*?\]', '', fallback_query, flags=re.I).strip()
+            def _sc():
                 sc_opts = {
                     "format": "bestaudio/best",
                     "noplaylist": True,
                     "quiet": True,
                     "no_warnings": True,
                     "ignoreerrors": True,
-                    "socket_timeout": 6,
+                    "socket_timeout": 5,
                     "default_search": "scsearch"
                 }
-                try:
-                    sc_res = yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{clean_title}", download=False)
-                    if sc_res and "entries" in sc_res:
-                        for chosen in sc_res["entries"]:
-                            if chosen and chosen.get("url"):
-                                print(f"✅ Fallback stream resolved instantly: {chosen.get('title')}")
-                                return chosen
-                except Exception as sc_err:
-                    print(f"⚠️ Fallback stream error: {sc_err}")
+                res = yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{clean_title}", download=False)
+                if res and "entries" in res:
+                    for e in res["entries"]:
+                        if e and e.get("url"):
+                            return e
+                return None
 
-            print(f"❌ All YouTube stream extraction tiers failed: {last_err}")
-            raise last_err
+            data = await loop.run_in_executor(None, _sc)
+            if data:
+                print(f"✅ Instant audio stream resolved: {data.get('title')}")
 
-        data = await loop.run_in_executor(None, run)
-        if data and "entries" in data and len(data["entries"]) > 0:
-            data = data["entries"][0]
-            
+        if not data:
+            raise Exception(f"Could not extract playable audio stream for {url}")
+
         stream_url = data.get("url") if data else None
         if not stream_url:
             raise Exception("No stream URL extracted!")
