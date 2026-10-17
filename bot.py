@@ -436,6 +436,17 @@ def init_db():
         stat_value INTEGER DEFAULT 0
     );
     """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS guild_bot_profiles (
+        guild_id INTEGER PRIMARY KEY,
+        name TEXT,
+        bio TEXT,
+        avatar_url TEXT,
+        banner_url TEXT,
+        updated_by INTEGER,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
     cursor.execute("UPDATE guild_settings SET stay_247 = 1 WHERE stay_247 = 0")
     conn.commit()
     conn.close()
@@ -819,6 +830,50 @@ class Database:
         conn.commit()
         conn.close()
         return removed
+
+    @staticmethod
+    def get_bot_profile(guild_id: int) -> dict:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name, bio, avatar_url, banner_url, updated_by, updated_at FROM guild_bot_profiles WHERE guild_id = ?", (guild_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return {
+                "name": row[0],
+                "bio": row[1],
+                "avatar_url": row[2],
+                "banner_url": row[3],
+                "updated_by": row[4],
+                "updated_at": row[5]
+            }
+        return {}
+
+    @staticmethod
+    def set_bot_profile(guild_id: int, name: Optional[str] = None, bio: Optional[str] = None, avatar_url: Optional[str] = None, banner_url: Optional[str] = None, updated_by: Optional[int] = None):
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO guild_bot_profiles (guild_id, name, bio, avatar_url, banner_url, updated_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(guild_id) DO UPDATE SET
+                name = CASE WHEN ? IS NOT NULL THEN ? ELSE guild_bot_profiles.name END,
+                bio = CASE WHEN ? IS NOT NULL THEN ? ELSE guild_bot_profiles.bio END,
+                avatar_url = CASE WHEN ? IS NOT NULL THEN ? ELSE guild_bot_profiles.avatar_url END,
+                banner_url = CASE WHEN ? IS NOT NULL THEN ? ELSE guild_bot_profiles.banner_url END,
+                updated_by = CASE WHEN ? IS NOT NULL THEN ? ELSE guild_bot_profiles.updated_by END,
+                updated_at = CURRENT_TIMESTAMP
+        """, (guild_id, name, bio, avatar_url, banner_url, updated_by, name, name, bio, bio, avatar_url, avatar_url, banner_url, banner_url, updated_by, updated_by))
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def reset_bot_profile(guild_id: int):
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM guild_bot_profiles WHERE guild_id = ?", (guild_id,))
+        conn.commit()
+        conn.close()
 
 # ─────────────────────────────────────────────
 #             SPOTIFY RESOLVER CLASS
@@ -4660,6 +4715,263 @@ async def slash_toggledj(ctx: commands.Context):
     conn.commit()
     conn.close()
     await send_response(ctx, embed=ok("DJ Mode Toggled", f"DJ role restriction enforcement is now **{'Enabled ✅' if new_state else 'Disabled ❌'}**."))
+
+async def bot_profile_logic(
+    ctx: commands.Context,
+    name: Optional[str] = None,
+    bio: Optional[str] = None,
+    avatar: Optional[discord.Attachment] = None,
+    avatar_url: Optional[str] = None,
+    banner: Optional[discord.Attachment] = None,
+    banner_url: Optional[str] = None,
+    reset: Optional[bool] = False
+):
+    if not ctx.guild:
+        return await send_response(ctx, embed=err("This command can only be used inside a Discord server."))
+
+    is_viewing = (
+        name is None and
+        bio is None and
+        avatar is None and
+        avatar_url is None and
+        banner is None and
+        banner_url is None and
+        not reset
+    )
+
+    saved_prof = Database.get_bot_profile(ctx.guild.id)
+
+    if is_viewing:
+        current_nick = ctx.guild.me.nick or f"None (Default: {bot.user.name})"
+        current_bio = saved_prof.get("bio") or "None set"
+        
+        e = discord.Embed(
+            title=f"🎭 Server Bot Profile: {ctx.guild.name}",
+            description=f"This bot profile is **unique to this server** (`{ctx.guild.name}`). Other servers are unaffected.\n",
+            color=0x2B2D31,
+            timestamp=datetime.now(timezone.utc)
+        )
+        e.add_field(name="🏷️ Server Nickname", value=f"`{current_nick}`", inline=True)
+        e.add_field(name="📝 Server Bio", value=f"```{current_bio[:500]}```", inline=False)
+
+        current_avatar = ctx.guild.me.guild_avatar.url if ctx.guild.me.guild_avatar else (bot.user.avatar.url if bot.user and bot.user.avatar else None)
+        if current_avatar:
+            e.set_thumbnail(url=current_avatar)
+        
+        current_banner = ctx.guild.me.guild_banner.url if getattr(ctx.guild.me, 'guild_banner', None) else saved_prof.get("banner_url")
+        if current_banner:
+            e.set_image(url=current_banner)
+
+        e.add_field(
+            name="⚙️ How to Customize (This Server Only)",
+            value=(
+                "• **`/bot profile name:NewName`** — Change bot nickname in this server\n"
+                "• **`/bot profile bio:Line 1\\nLine 2`** — Set server bio (use `\\n` for newlines)\n"
+                "• **`/bot profile avatar:[image]`** — Upload avatar for this server\n"
+                "• **`/bot profile banner:[image]`** — Upload banner for this server\n"
+                "• **`/bot profile reset:True`** — Reset server profile back to global default"
+            ),
+            inline=False
+        )
+        e.set_footer(text=f"Server ID: {ctx.guild.id} • Shadow Cheats Music", icon_url=current_avatar)
+        return await send_response(ctx, embed=e)
+
+    # Permission check for modifying
+    has_perm = (
+        ctx.author.guild_permissions.administrator or
+        ctx.author.guild_permissions.manage_guild or
+        ctx.author.id == ctx.guild.owner_id or
+        ctx.author.id in OWNER_IDS
+    )
+    if not has_perm:
+        return await send_response(ctx, embed=err("Permission Denied: You need **Manage Server** or **Administrator** permission to modify the bot's profile in this server."))
+
+    if ctx.interaction and not ctx.interaction.response.is_done():
+        try:
+            await ctx.interaction.response.defer()
+        except Exception:
+            pass
+
+    avatar_bytes = None
+    applied_avatar_url = None
+    if avatar:
+        try:
+            avatar_bytes = await avatar.read()
+            applied_avatar_url = avatar.url
+        except Exception as e:
+            return await send_response(ctx, embed=err(f"Failed to read avatar attachment: {e}"))
+    elif avatar_url:
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(avatar_url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                    if r.status == 200:
+                        avatar_bytes = await r.read()
+                        applied_avatar_url = avatar_url
+                    else:
+                        return await send_response(ctx, embed=err(f"Failed to download avatar from URL (HTTP {r.status})."))
+        except Exception as e:
+            return await send_response(ctx, embed=err(f"Error fetching avatar URL: {e}"))
+
+    banner_bytes = None
+    applied_banner_url = None
+    if banner:
+        try:
+            banner_bytes = await banner.read()
+            applied_banner_url = banner.url
+        except Exception as e:
+            return await send_response(ctx, embed=err(f"Failed to read banner attachment: {e}"))
+    elif banner_url:
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(banner_url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                    if r.status == 200:
+                        banner_bytes = await r.read()
+                        applied_banner_url = banner_url
+                    else:
+                        return await send_response(ctx, embed=err(f"Failed to download banner from URL (HTTP {r.status})."))
+        except Exception as e:
+            return await send_response(ctx, embed=err(f"Error fetching banner URL: {e}"))
+
+    edit_kwargs = {}
+    cleaned_bio = None
+
+    if reset:
+        edit_kwargs["nick"] = None
+        edit_kwargs["avatar"] = None
+        edit_kwargs["banner"] = None
+        edit_kwargs["bio"] = None
+        Database.reset_bot_profile(ctx.guild.id)
+    else:
+        if name is not None:
+            if name.lower() in ("reset", "none", "clear", "default"):
+                edit_kwargs["nick"] = None
+            else:
+                edit_kwargs["nick"] = name.strip()[:32]
+
+        if bio is not None:
+            if bio.lower() in ("reset", "none", "clear", "default"):
+                cleaned_bio = None
+                edit_kwargs["bio"] = None
+            else:
+                cleaned_bio = bio.replace("\\n", "\n").strip()[:190]
+                edit_kwargs["bio"] = cleaned_bio
+
+        if avatar_bytes is not None:
+            edit_kwargs["avatar"] = avatar_bytes
+
+        if banner_bytes is not None:
+            edit_kwargs["banner"] = banner_bytes
+
+    if not edit_kwargs and not reset:
+        return await send_response(ctx, embed=err("No profile changes provided."))
+
+    banner_warning = None
+    try:
+        await ctx.guild.me.edit(**edit_kwargs, reason=f"Server bot profile updated by {ctx.author} ({ctx.author.id})")
+    except discord.HTTPException as he:
+        if "banner" in edit_kwargs and len(edit_kwargs) > 1:
+            edit_kwargs.pop("banner", None)
+            banner_warning = "Server banner could not be applied (server may require Discord Boost Level for member banners)."
+            try:
+                await ctx.guild.me.edit(**edit_kwargs, reason=f"Server bot profile updated (banner skipped) by {ctx.author}")
+            except Exception as he2:
+                return await send_response(ctx, embed=err(f"Discord API error while updating profile: {he2}"))
+        else:
+            return await send_response(ctx, embed=err(f"Discord API error while updating profile: {he}"))
+    except discord.Forbidden as fe:
+        return await send_response(ctx, embed=err(f"Bot lacks permissions to update profile in this server: {fe}"))
+    except Exception as ex:
+        return await send_response(ctx, embed=err(f"Unexpected error: {ex}"))
+
+    if not reset:
+        db_nick = edit_kwargs.get("nick") if "nick" in edit_kwargs else None
+        db_bio = cleaned_bio if bio is not None else None
+        Database.set_bot_profile(
+            guild_id=ctx.guild.id,
+            name=db_nick,
+            bio=db_bio,
+            avatar_url=applied_avatar_url,
+            banner_url=applied_banner_url,
+            updated_by=ctx.author.id
+        )
+
+    current_avatar = ctx.guild.me.guild_avatar.url if ctx.guild.me.guild_avatar else (bot.user.avatar.url if bot.user and bot.user.avatar else None)
+    e = discord.Embed(
+        title="✅ Server Bot Profile Updated",
+        description=f"Bot profile has been successfully updated **strictly for {ctx.guild.name}**.\nNo other servers were affected.",
+        color=0x2B2D31,
+        timestamp=datetime.now(timezone.utc)
+    )
+    if reset:
+        e.add_field(name="🔄 Reset Status", value="All server profile settings have been reset back to global defaults.", inline=False)
+    else:
+        if "nick" in edit_kwargs:
+            e.add_field(name="🏷️ Nickname", value=f"`{edit_kwargs['nick'] or 'Default'}`", inline=True)
+        if bio is not None:
+            e.add_field(name="📝 Bio", value=f"```{cleaned_bio or 'Cleared'}```", inline=False)
+        if avatar_bytes is not None:
+            e.add_field(name="🖼️ Avatar", value="[Updated for this server]", inline=True)
+        if banner_bytes is not None and not banner_warning:
+            e.add_field(name="🎨 Banner", value="[Updated for this server]", inline=True)
+        if banner_warning:
+            e.add_field(name="⚠️ Note", value=banner_warning, inline=False)
+
+    if current_avatar:
+        e.set_thumbnail(url=current_avatar)
+    if applied_banner_url:
+        e.set_image(url=applied_banner_url)
+
+    e.set_footer(text=f"Updated by {ctx.author.display_name} • {ctx.guild.name}", icon_url=ctx.author.display_avatar.url)
+    await send_response(ctx, embed=e)
+
+@bot.hybrid_group(name="bot", description="Manage bot configuration and profile in this server", invoke_without_command=True)
+async def bot_group_cmd(ctx: commands.Context):
+    if ctx.invoked_subcommand is None:
+        await bot_profile_logic(ctx)
+
+@bot_group_cmd.command(name="profile", description="Change bot avatar, banner, bio, and nickname in this server only")
+@app_commands.describe(
+    name="New bot nickname for this server only",
+    bio="New server bio (use \\n for line breaks)",
+    avatar="Upload an avatar image for this server only",
+    avatar_url="Direct image URL for avatar",
+    banner="Upload a banner image for this server only",
+    banner_url="Direct image URL for banner",
+    reset="Reset server profile back to global defaults (True/False)"
+)
+async def bot_profile_subcmd(
+    ctx: commands.Context,
+    name: Optional[str] = None,
+    bio: Optional[str] = None,
+    avatar: Optional[discord.Attachment] = None,
+    avatar_url: Optional[str] = None,
+    banner: Optional[discord.Attachment] = None,
+    banner_url: Optional[str] = None,
+    reset: Optional[bool] = False
+):
+    await bot_profile_logic(ctx, name, bio, avatar, avatar_url, banner, banner_url, reset)
+
+@bot.hybrid_command(name="botprofile", description="Change bot avatar, banner, bio, and nickname in this server only")
+@app_commands.describe(
+    name="New bot nickname for this server only",
+    bio="New server bio (use \\n for line breaks)",
+    avatar="Upload an avatar image for this server only",
+    avatar_url="Direct image URL for avatar",
+    banner="Upload a banner image for this server only",
+    banner_url="Direct image URL for banner",
+    reset="Reset server profile back to global defaults (True/False)"
+)
+async def slash_botprofile(
+    ctx: commands.Context,
+    name: Optional[str] = None,
+    bio: Optional[str] = None,
+    avatar: Optional[discord.Attachment] = None,
+    avatar_url: Optional[str] = None,
+    banner: Optional[discord.Attachment] = None,
+    banner_url: Optional[str] = None,
+    reset: Optional[bool] = False
+):
+    await bot_profile_logic(ctx, name, bio, avatar, avatar_url, banner, banner_url, reset)
 
 @bot.hybrid_command(name="ping", description="Shows the bot latency ping")
 async def slash_ping(ctx: commands.Context):
