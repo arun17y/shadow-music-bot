@@ -298,18 +298,7 @@ if not BOT_TOKEN:
         BOT_TOKEN = base64.b64decode("TVRVek16RXdORGN4TXpBMk5UVTJOakkwT1EuRzFiWTJyLjFPUTYzYmVMUmFSYUJzRWh0UVZwMHNlU3E1UzJ0aWMzUlBuVzdz").decode()
     except Exception:
         pass
-
-if os.path.exists(CONFIG_FILE) and BOT_TOKEN:
-    try:
-        with open(CONFIG_FILE, "r") as f:
-            cdata = json.load(f)
-        if not cdata.get("token"):
-            cdata["token"] = BOT_TOKEN
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(cdata, f, indent=4)
-            print("✅ Auto-populated token into config.json")
-    except Exception:
-        pass
+# Token is kept in memory / environment variables
 
 
 COOKIE_ARG = None
@@ -1006,25 +995,21 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "bestaudio/18/best/b",
+    "format": "18/bestaudio/best/b",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": COOKIES_FILE if os.path.exists(COOKIES_FILE) else None,
-    "socket_timeout": 10,
+    "cookiefile": None,
+    "socket_timeout": 8,
     "retries": 1,
     "extractor_retries": 1,
-    "js_runtimes": {"deno": {}, "node": {}},
-    "remote_components": ["ejs:github", "ejs:npm"],
     "extractor_args": {
         "youtube": {
-            "player_client": ["web", "mweb", "android_vr", "android"]
-        },
-        "youtubepot-bgutilhttp": {
-            "base_url": ["http://127.0.0.1:4416"]
+            "player_client": ["android", "web_embedded"],
+            "player_skip": ["webpage"]
         }
     },
 }
@@ -1284,22 +1269,22 @@ class YTSource(discord.PCMVolumeTransformer):
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = False
-        opts["format"] = "bestaudio/best"
-        cookie_path = COOKIES_FILE if os.path.exists(COOKIES_FILE) else None
-        if cookie_path:
-            opts["cookiefile"] = cookie_path
-        opts["socket_timeout"] = 12
+        opts["format"] = "18/bestaudio/best/b"
+        opts["cookiefile"] = None
+        opts["socket_timeout"] = 8
 
         def run():
             try:
                 return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
             except Exception as e:
-                print(f"⚠️ Primary YouTube extract failed ({e}). Attempting fallback...")
+                print(f"⚠️ Primary Android extract failed ({e}). Attempting fallback...")
                 try:
                     fallback_opts = opts.copy()
+                    fallback_opts["format"] = "bestaudio/best/b"
                     fallback_opts["extractor_args"] = {
                         "youtube": {
-                            "player_client": ["visionos", "android", "ios", "tv"]
+                            "player_client": ["android", "web_embedded"],
+                            "player_skip": ["webpage"]
                         }
                     }
                     return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
