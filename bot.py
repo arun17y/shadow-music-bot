@@ -1383,25 +1383,41 @@ class YTSource(discord.PCMVolumeTransformer):
             pot_token = pot_info.get("poToken")
 
             opts = YTDL_OPTIONS.copy()
-            opts["format"] = "bestaudio/18/b/best"
+            opts["format"] = "18/bestaudio/b/best"
 
-            # Tier 1: Apple iOS & Android VR mobile clients (Bypasses datacenter web bot blocks, direct Format 18 AAC)
+            # Tier 1: Android native client (Bypasses datacenter web bot blocks, direct Format 18 stereo AAC)
+            opts_android = opts.copy()
+            opts_android["cookiefile"] = None
+            opts_android["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["android"]
+                }
+            }
+            try:
+                res = yt_dlp.YoutubeDL(opts_android).extract_info(url, download=False)
+                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                    print(f"✅ Tier 1 (Android) extract succeeded for {vid_id or url}!")
+                    return res
+            except Exception as e_a:
+                print(f"⚠️ Tier 1 (Android) failed: {e_a}. Trying Android VR / iOS...")
+
+            # Tier 2: Android VR & iOS mobile clients
             opts_mobile = opts.copy()
             opts_mobile["cookiefile"] = None
             opts_mobile["extractor_args"] = {
                 "youtube": {
-                    "player_client": ["ios", "android_vr"]
+                    "player_client": ["android_vr", "ios"]
                 }
             }
             try:
                 res = yt_dlp.YoutubeDL(opts_mobile).extract_info(url, download=False)
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                    print(f"✅ Tier 1 (iOS / Android VR) extract succeeded for {vid_id or url}!")
+                    print(f"✅ Tier 2 (Android VR / iOS) extract succeeded for {vid_id or url}!")
                     return res
             except Exception as e_m:
-                print(f"⚠️ Tier 1 (iOS / Android VR) failed: {e_m}. Trying bgutil plugin provider...")
+                print(f"⚠️ Tier 2 (Android VR / iOS) failed: {e_m}. Trying bgutil plugin provider...")
 
-            # Tier 2: Automated bgutil-pot plugin integration (Official Provider on port 4416)
+            # Tier 3: Automated bgutil-pot plugin integration (Official Provider on port 4416)
             opts_plugin = opts.copy()
             opts_plugin["cookiefile"] = None
             opts_plugin["extractor_args"] = {
@@ -1409,7 +1425,7 @@ class YTSource(discord.PCMVolumeTransformer):
                     "base_url": ["http://127.0.0.1:4416"]
                 },
                 "youtube": {
-                    "player_client": ["ios", "android_vr", "mweb", "web"]
+                    "player_client": ["android", "android_vr", "mweb", "web"]
                 }
             }
             try:
