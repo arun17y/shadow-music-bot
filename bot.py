@@ -315,6 +315,8 @@ if os.path.exists(COOKIES_FILE):
                 continue
             _parts = _ls.split("\t")
             if len(_parts) >= 7:
+                if not _parts[0].endswith("youtube.com"):
+                    continue
                 if _parts[0].startswith("."):
                     _parts[1] = "TRUE"
                 _clean_lines.append("\t".join(_parts) + "\n")
@@ -1006,7 +1008,10 @@ YTDL_OPTIONS = {
     "js_runtimes": {"node": {}},
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "ios", "web"]
+            "player_client": ["web", "mweb", "android_vr", "android"]
+        },
+        "youtubepot-bgutilhttp": {
+            "base_url": ["http://127.0.0.1:4416"]
         }
     },
 }
