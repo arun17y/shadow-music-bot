@@ -2015,23 +2015,23 @@ class MusicBot(commands.Bot):
             print("ℹ️ bgutil-pot binary not found in system PATH. Skipping background server launch.")
 
     async def keep_alive_pinger(self):
-        """24/7 Free Hosting Keepalive: Pings self URL every 5 minutes to prevent Render from sleeping."""
+        """24/7 Free Hosting Keepalive: Pings self URL every 2 minutes to prevent Render from sleeping."""
         await self.wait_until_ready()
-        target_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://shadow-cheats-music-sg.onrender.com"
-        ping_endpoint = f"{target_url.rstrip('/')}/health"
-        print(f"🔄 24/7 Keepalive self-pinger initialized for {ping_endpoint} (interval: 300s)")
+        target_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://shadow-cheats-music-eu.onrender.com"
+        ping_endpoint = f"{target_url.rstrip('/')}/api/health"
+        print(f"🔄 24/7 Keepalive self-pinger initialized for {ping_endpoint} (interval: 120s)")
         
         while not self.is_closed():
             try:
-                await asyncio.sleep(300)
+                await asyncio.sleep(120)
                 async with aiohttp.ClientSession() as session:
                     async with session.get(ping_endpoint, timeout=15) as resp:
                         if resp.status == 200:
                             pass
                         else:
                             print(f"⚠️ Keepalive ping returned status {resp.status}")
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"⚠️ Keepalive ping error: {e}")
 
     async def start_health_server(self):
         if getattr(self, '_health_server_running', False):
