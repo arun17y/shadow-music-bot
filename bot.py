@@ -1004,11 +1004,11 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": COOKIE_ARG,
+    "cookiefile": None,
     "socket_timeout": 8,
     "retries": 1,
     "extractor_retries": 1,
-    "js_runtimes": {"node": {}, "deno": {}},
+    "js_runtimes": {"node": {}},
     "extractor_args": {
         "youtube": {
             "player_client": ["android", "ios"]
@@ -1292,7 +1292,7 @@ class YTSource(discord.PCMVolumeTransformer):
     @classmethod
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         def _get_yt():
-            # 1. Primary: Direct Android mobile client (bypasses bot checks, returns direct googlevideo stream on host IP)
+            # 1. Primary: Direct Android mobile client (format 18 AAC)
             opts = YTDL_OPTIONS.copy()
             opts["format"] = "bestaudio/18/b/best"
             opts["cookiefile"] = None
@@ -1320,21 +1320,17 @@ class YTSource(discord.PCMVolumeTransformer):
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
                     return res
             except Exception as e2:
-                print(f"⚠️ TV extract hit: {e2}. Trying web with POT...")
+                print(f"⚠️ TV extract hit: {e2}. Trying web_embedded...")
 
-            # 3. Tertiary: Web client with PO Token daemon
-            opts_pot = opts.copy()
-            opts_pot["extractor_args"] = {
+            # 3. Tertiary: Web embedded client
+            opts_web = opts.copy()
+            opts_web["extractor_args"] = {
                 "youtube": {
-                    "fetch_pot": ["always"],
-                    "player_client": ["web", "mweb"]
-                },
-                "youtubepot-bgutilhttp": {
-                    "base_url": ["http://127.0.0.1:4416"]
+                    "player_client": ["web_embedded", "mweb"]
                 }
             }
             try:
-                return yt_dlp.YoutubeDL(opts_pot).extract_info(url, download=False)
+                return yt_dlp.YoutubeDL(opts_web).extract_info(url, download=False)
             except Exception as e3:
                 print(f"❌ All direct YouTube stream extractions failed: {e3}")
             return None
