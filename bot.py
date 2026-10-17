@@ -1147,6 +1147,12 @@ class YTSource(discord.PCMVolumeTransformer):
         q = f"ytsearch5:{query}" if is_search else query
             
         def run():
+            opts_v = opts.copy()
+            opts_v["extractor_args"] = {"youtube": {"player_client": ["visionos"]}}
+            try:
+                return yt_dlp.YoutubeDL(opts_v).extract_info(q, download=False)
+            except Exception:
+                pass
             ytdl = yt_dlp.YoutubeDL(opts)
             try:
                 return ytdl.extract_info(q, download=False)
@@ -1218,6 +1224,12 @@ class YTSource(discord.PCMVolumeTransformer):
             q = query
         
         def run():
+            opts_v = opts.copy()
+            opts_v["extractor_args"] = {"youtube": {"player_client": ["visionos"]}}
+            try:
+                return yt_dlp.YoutubeDL(opts_v).extract_info(q, download=False)
+            except Exception:
+                pass
             ytdl = yt_dlp.YoutubeDL(opts)
             try:
                 return ytdl.extract_info(q, download=False)
@@ -1315,7 +1327,23 @@ class YTSource(discord.PCMVolumeTransformer):
             opts = YTDL_OPTIONS.copy()
             opts["format"] = "bestaudio/18/b/best"
 
-            # Tier 1: Clean Web client with PO Token
+            # Tier 1: Apple VisionOS native client (Zero bot blocks, direct Google Video audio)
+            opts_vision = opts.copy()
+            opts_vision["cookiefile"] = None
+            opts_vision["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["visionos"]
+                }
+            }
+            try:
+                res = yt_dlp.YoutubeDL(opts_vision).extract_info(url, download=False)
+                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                    print(f"✅ Tier 1 (VisionOS) extract succeeded for {vid_id or url}!")
+                    return res
+            except Exception as e_v:
+                print(f"⚠️ Tier 1 (VisionOS) failed: {e_v}. Trying Tier 2 (PO Token Web)...")
+
+            # Tier 2: Clean Web client with PO Token
             if pot_token:
                 opts_pot = opts.copy()
                 opts_pot["cookiefile"] = None
@@ -1328,10 +1356,10 @@ class YTSource(discord.PCMVolumeTransformer):
                 try:
                     res = yt_dlp.YoutubeDL(opts_pot).extract_info(url, download=False)
                     if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                        print(f"✅ Tier 1 (PO Token Web) extract succeeded for {vid_id or url}!")
+                        print(f"✅ Tier 2 (PO Token Web) extract succeeded for {vid_id or url}!")
                         return res
                 except Exception as e_pot:
-                    print(f"⚠️ Tier 1 (PO Token Web) failed: {e_pot}. Trying Tier 2...")
+                    print(f"⚠️ Tier 2 (PO Token Web) failed: {e_pot}. Trying Tier 3...")
 
             # Tier 2: MWeb client with PO Token
             if pot_token:
