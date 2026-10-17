@@ -1422,6 +1422,23 @@ class YTSource(discord.PCMVolumeTransformer):
             opts = YTDL_OPTIONS.copy()
             opts["format"] = "18/bestaudio/b/best"
 
+            # Tier 0: Authenticated YouTube session cookies (Bypasses datacenter blocks completely)
+            if COOKIE_ARG and os.path.exists(COOKIE_ARG) and os.path.getsize(COOKIE_ARG) > 50:
+                opts_cookie = opts.copy()
+                opts_cookie["cookiefile"] = COOKIE_ARG
+                opts_cookie["extractor_args"] = {
+                    "youtube": {
+                        "player_client": ["web", "mweb", "android"]
+                    }
+                }
+                try:
+                    res = yt_dlp.YoutubeDL(opts_cookie).extract_info(url, download=False)
+                    if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                        print(f"✅ Tier 0 (Authenticated Cookies) extract succeeded for {vid_id or url}!")
+                        return res
+                except Exception as e_c0:
+                    print(f"⚠️ Tier 0 (Authenticated Cookies) failed: {e_c0}. Falling back to unauthenticated clients...")
+
             # Tier 1: Android native client (Bypasses datacenter web bot blocks, direct Format 18 stereo AAC)
             opts_android = opts.copy()
             opts_android["cookiefile"] = None
