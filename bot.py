@@ -997,15 +997,19 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "bestaudio[ext=m4a]/bestaudio/18/best[ext=webm]/best/bestvideo+bestaudio",
+    "format": "bestaudio/18/best/b",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
-    "quiet": False,
-    "no_warnings": False,
+    "quiet": True,
+    "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": COOKIE_ARG,
-    "js_runtimes": {"node": {}},
+    "cookiefile": None,
+    "socket_timeout": 10,
+    "retries": 1,
+    "extractor_retries": 1,
+    "js_runtimes": {"deno": {}, "node": {}},
+    "remote_components": ["ejs:github", "ejs:npm"],
     "extractor_args": {
         "youtube": {
             "player_client": ["web", "mweb", "android_vr", "android"]
@@ -1292,20 +1296,30 @@ class YTSource(discord.PCMVolumeTransformer):
     @classmethod
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         opts = YTDL_OPTIONS.copy()
-        
+        opts["extract_flat"] = False
+        opts["format"] = "18/bestaudio/best/b"
+        opts["cookiefile"] = None
+        opts["socket_timeout"] = 10
+
         def run():
-            ytdl = yt_dlp.YoutubeDL(opts)
             try:
-                return ytdl.extract_info(url, download=False)
+                return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
             except Exception as e:
-                if opts.get("cookiefile"):
-                    opts_no = opts.copy()
-                    opts_no["cookiefile"] = None
-                    try:
-                        return yt_dlp.YoutubeDL(opts_no).extract_info(url, download=False)
-                    except Exception:
-                        pass
-                raise e
+                print(f"⚠️ Primary YouTube extract failed ({e}). Attempting Android VR fallback...")
+                try:
+                    fallback_opts = opts.copy()
+                    fallback_opts["extractor_args"] = {
+                        "youtube": {
+                            "player_client": ["android_vr", "android"]
+                        },
+                        "youtubepot-bgutilhttp": {
+                            "base_url": ["http://127.0.0.1:4416"]
+                        }
+                    }
+                    return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
+                except Exception as fb_err:
+                    print(f"❌ YouTube fallback failed ({fb_err})")
+                    raise e
 
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
@@ -1316,17 +1330,10 @@ class YTSource(discord.PCMVolumeTransformer):
             raise Exception("No stream URL extracted!")
             
         headers = data.get("http_headers", {})
-        
-        # Select correct User-Agent based on client type in URL to bypass 403 Forbidden
-        if "c=ANDROID_VR" in stream_url:
-            ua = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
-        elif "c=ANDROID" in stream_url:
-            ua = "com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip"
-        else:
-            ua = headers.get("User-Agent", headers.get("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"))
+        ua = headers.get("User-Agent") or headers.get("user-agent") or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         
         ffmpeg_opts = get_ffmpeg_options(active_filter, speed, pitch)
-        ffmpeg_opts["before_options"] += f' -user_agent "{ua}" -headers "Referer: https://www.youtube.com/"'
+        ffmpeg_opts["before_options"] += f' -user_agent "{ua}"'
         
         if seek_time > 0:
             ffmpeg_opts["before_options"] += f" -ss {seek_time}"
