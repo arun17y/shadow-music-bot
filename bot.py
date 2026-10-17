@@ -219,13 +219,13 @@ sys.stderr = OutputTee(sys.stderr)
 #             DEPENDENCY AUTO-INSTALLER
 # ─────────────────────────────────────────────
 
-REQUIRED = ["discord.py>=2.3.0", "yt-dlp", "PyNaCl", "aiohttp", "psutil", "davey", "bgutil-ytdlp-pot-provider"]
+REQUIRED = ["discord.py>=2.3.0", "yt-dlp", "PyNaCl", "aiohttp", "psutil", "davey"]
 
 def auto_install():
     missing = []
     for pkg in REQUIRED:
         name = pkg.split(">=")[0]
-        import_name = {"discord.py": "discord", "PyNaCl": "nacl", "bgutil-ytdlp-pot-provider": "yt_dlp_plugins"}.get(name, name.replace("-", "_"))
+        import_name = {"discord.py": "discord", "PyNaCl": "nacl"}.get(name, name.replace("-", "_"))
         try:
             importlib.import_module(import_name)
         except ImportError:
@@ -1004,18 +1004,13 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": None,
+    "cookiefile": COOKIE_ARG,
     "socket_timeout": 10,
     "retries": 1,
     "extractor_retries": 1,
-    "js_runtimes": {"deno": {}, "node": {}},
-    "remote_components": ["ejs:github", "ejs:npm"],
     "extractor_args": {
         "youtube": {
-            "player_client": ["web", "mweb", "android_vr", "android"]
-        },
-        "youtubepot-bgutilhttp": {
-            "base_url": ["http://127.0.0.1:4416"]
+            "player_client": ["android", "ios", "web"]
         }
     },
 }
@@ -1303,36 +1298,40 @@ class YTSource(discord.PCMVolumeTransformer):
         def run():
             last_err = None
             try:
-                return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
+                android_opts = opts.copy()
+                android_opts["cookiefile"] = None
+                android_opts["extractor_args"] = {
+                    "youtube": {
+                        "player_client": ["android"]
+                    }
+                }
+                return yt_dlp.YoutubeDL(android_opts).extract_info(url, download=False)
             except Exception as e:
                 last_err = e
-                print(f"⚠️ Primary extract failed ({e}). Trying mobile client fallback...")
+                print(f"⚠️ Android extract failed ({e}). Trying iOS & web_embedded...")
             
             try:
                 fb_opts = opts.copy()
                 fb_opts["cookiefile"] = None
                 fb_opts["extractor_args"] = {
                     "youtube": {
-                        "player_client": ["android", "ios", "web_embedded"]
+                        "player_client": ["ios", "web_embedded"]
                     }
                 }
                 return yt_dlp.YoutubeDL(fb_opts).extract_info(url, download=False)
             except Exception as e:
                 last_err = e
-                print(f"⚠️ Mobile fallback failed ({e}). Trying TV & VR fallback...")
+                print(f"⚠️ iOS/web_embedded fallback failed ({e}). Trying TV & web with cookies...")
 
             try:
-                fb_opts2 = opts.copy()
-                fb_opts2["cookiefile"] = None
-                fb_opts2["extractor_args"] = {
+                web_opts = opts.copy()
+                web_opts["cookiefile"] = COOKIE_ARG
+                web_opts["extractor_args"] = {
                     "youtube": {
-                        "player_client": ["tv", "android_vr"]
-                    },
-                    "youtubepot-bgutilhttp": {
-                        "base_url": ["http://127.0.0.1:4416"]
+                        "player_client": ["tv_embedded", "tv", "web"]
                     }
                 }
-                return yt_dlp.YoutubeDL(fb_opts2).extract_info(url, download=False)
+                return yt_dlp.YoutubeDL(web_opts).extract_info(url, download=False)
             except Exception as e:
                 last_err = e
                 print(f"❌ All YouTube stream extraction tiers failed: {e}")
