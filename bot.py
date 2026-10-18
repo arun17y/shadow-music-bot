@@ -1432,32 +1432,59 @@ class YTSource(discord.PCMVolumeTransformer):
                 "js_runtimes": {"node": {}, "deno": {}},
             }
 
-            # Tier 0: Authenticated YouTube session cookies (if loaded and valid)
-            if COOKIE_ARG and os.path.exists(COOKIE_ARG) and os.path.getsize(COOKIE_ARG) > 50:
-                opts_cookie = base_opts.copy()
-                opts_cookie["cookiefile"] = COOKIE_ARG
-                if CHROME_TARGET:
-                    opts_cookie["impersonate"] = CHROME_TARGET
-                opts_cookie["extractor_args"] = {
-                    "youtubepot-bgutilhttp": {
-                        "base_url": ["http://127.0.0.1:4416"]
-                    },
-                    "youtube": {
-                        "player_client": ["web"]
-                    }
+            # Tier 1: Android Native client (Format 18: 360p stereo AAC, zero bot checks, zero PO token required)
+            opts_android = base_opts.copy()
+            opts_android["format"] = "18/b/best"
+            opts_android["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["android"]
                 }
-                try:
-                    res = yt_dlp.YoutubeDL(opts_cookie).extract_info(url, download=False)
-                    if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                        print(f"✅ Tier 0 (Authenticated Cookies + bgutil) succeeded for {vid_id or url}!")
-                        return res
-                except Exception as e_c0:
-                    print(f"⚠️ Tier 0 (Authenticated Cookies) failed: {e_c0}. Falling back to unauthenticated tiers...")
+            }
+            try:
+                res = yt_dlp.YoutubeDL(opts_android).extract_info(url, download=False)
+                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                    print(f"✅ Tier 1 (Android Native Format 18) succeeded for {vid_id or url}!")
+                    return res
+            except Exception as e_a:
+                print(f"⚠️ Tier 1 (Android) failed: {e_a}. Trying Tier 2 (Android VR)...")
 
-            # Tier 1: Official bgutil-pot PO Token Provider on port 4416 with Web Client
+            # Tier 2: Android VR client
+            opts_avr = base_opts.copy()
+            opts_avr["format"] = "18/b/best"
+            opts_avr["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["android_vr"]
+                }
+            }
+            try:
+                res = yt_dlp.YoutubeDL(opts_avr).extract_info(url, download=False)
+                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                    print(f"✅ Tier 2 (Android VR) succeeded for {vid_id or url}!")
+                    return res
+            except Exception as e_avr:
+                print(f"⚠️ Tier 2 (Android VR) failed: {e_avr}. Trying Tier 3 (VisionOS)...")
+
+            # Tier 3: Apple VisionOS native client (Direct Opus/AAC Google Video stream)
+            opts_vision = base_opts.copy()
+            opts_vision["format"] = "bestaudio/18/b/best"
+            opts_vision["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["visionos"]
+                }
+            }
+            try:
+                res = yt_dlp.YoutubeDL(opts_vision).extract_info(url, download=False)
+                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                    print(f"✅ Tier 3 (VisionOS) succeeded for {vid_id or url}!")
+                    return res
+            except Exception as e_v:
+                print(f"⚠️ Tier 3 (VisionOS) failed: {e_v}. Trying Tier 4 (bgutil PO Provider)...")
+
+            # Tier 4: bgutil-pot PO Token Provider on port 4416 (Web client)
             opts_plugin = base_opts.copy()
             if CHROME_TARGET:
                 opts_plugin["impersonate"] = CHROME_TARGET
+            opts_plugin["format"] = "bestaudio/18/b/best"
             opts_plugin["extractor_args"] = {
                 "youtubepot-bgutilhttp": {
                     "base_url": ["http://127.0.0.1:4416"]
@@ -1469,16 +1496,17 @@ class YTSource(discord.PCMVolumeTransformer):
             try:
                 res = yt_dlp.YoutubeDL(opts_plugin).extract_info(url, download=False)
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                    print(f"✅ Tier 1 (bgutil Plugin Provider Web) succeeded for {vid_id or url}!")
+                    print(f"✅ Tier 4 (bgutil Plugin Provider Web) succeeded for {vid_id or url}!")
                     return res
             except Exception as e_p:
-                print(f"⚠️ Tier 1 (bgutil Plugin Provider Web) failed: {e_p}. Trying Tier 2 (Direct PO Token)...")
+                print(f"⚠️ Tier 4 (bgutil Plugin Provider Web) failed: {e_p}. Trying Tier 5 (Direct PO Token)...")
 
-            # Tier 2: Direct PO Token injection (web.gvs + web.player)
+            # Tier 5: Direct PO Token injection (web.gvs + web.player)
             if pot_token:
                 opts_pot = base_opts.copy()
                 if CHROME_TARGET:
                     opts_pot["impersonate"] = CHROME_TARGET
+                opts_pot["format"] = "bestaudio/18/b/best"
                 opts_pot["extractor_args"] = {
                     "youtube": {
                         "player_client": ["web"],
@@ -1488,76 +1516,14 @@ class YTSource(discord.PCMVolumeTransformer):
                 try:
                     res = yt_dlp.YoutubeDL(opts_pot).extract_info(url, download=False)
                     if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                        print(f"✅ Tier 2 (Direct PO Token Web) succeeded for {vid_id or url}!")
+                        print(f"✅ Tier 5 (Direct PO Token Web) succeeded for {vid_id or url}!")
                         return res
                 except Exception as e_pot:
-                    print(f"⚠️ Tier 2 (Direct PO Token Web) failed: {e_pot}. Trying Tier 3 (MWeb PO Token)...")
+                    print(f"⚠️ Tier 5 (Direct PO Token Web) failed: {e_pot}. Trying Tier 6 (TV)...")
 
-                # Tier 3: MWeb client with PO Token
-                opts_mweb = base_opts.copy()
-                if CHROME_TARGET:
-                    opts_mweb["impersonate"] = CHROME_TARGET
-                opts_mweb["extractor_args"] = {
-                    "youtube": {
-                        "player_client": ["mweb"],
-                        "po_token": [f"mweb.gvs+{pot_token}", f"mweb.player+{pot_token}"]
-                    }
-                }
-                try:
-                    res = yt_dlp.YoutubeDL(opts_mweb).extract_info(url, download=False)
-                    if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                        print(f"✅ Tier 3 (MWeb PO Token) succeeded for {vid_id or url}!")
-                        return res
-                except Exception as e_mw:
-                    print(f"⚠️ Tier 3 (MWeb PO Token) failed: {e_mw}. Trying Tier 4 (VisionOS)...")
-
-            # Tier 4: Apple VisionOS native client (Zero bot blocks, direct Google Video audio)
-            opts_vision = base_opts.copy()
-            opts_vision["extractor_args"] = {
-                "youtube": {
-                    "player_client": ["visionos"]
-                }
-            }
-            try:
-                res = yt_dlp.YoutubeDL(opts_vision).extract_info(url, download=False)
-                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                    print(f"✅ Tier 4 (VisionOS) succeeded for {vid_id or url}!")
-                    return res
-            except Exception as e_v:
-                print(f"⚠️ Tier 4 (VisionOS) failed: {e_v}. Trying Tier 5 (Android Native)...")
-
-            # Tier 5: Android native client
-            opts_android = base_opts.copy()
-            opts_android["extractor_args"] = {
-                "youtube": {
-                    "player_client": ["android"]
-                }
-            }
-            try:
-                res = yt_dlp.YoutubeDL(opts_android).extract_info(url, download=False)
-                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                    print(f"✅ Tier 5 (Android) succeeded for {vid_id or url}!")
-                    return res
-            except Exception as e_a:
-                print(f"⚠️ Tier 5 (Android) failed: {e_a}. Trying Tier 6 (iOS / Android VR)...")
-
-            # Tier 6: iOS & Android VR
-            opts_ios = base_opts.copy()
-            opts_ios["extractor_args"] = {
-                "youtube": {
-                    "player_client": ["ios", "android_vr"]
-                }
-            }
-            try:
-                res = yt_dlp.YoutubeDL(opts_ios).extract_info(url, download=False)
-                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                    print(f"✅ Tier 6 (iOS / Android VR) succeeded for {vid_id or url}!")
-                    return res
-            except Exception as e_ios:
-                print(f"⚠️ Tier 6 (iOS / Android VR) failed: {e_ios}. Trying Tier 7 (TV)...")
-
-            # Tier 7: TV client
+            # Tier 6: TV client
             opts_tv = base_opts.copy()
+            opts_tv["format"] = "18/b/best"
             opts_tv["extractor_args"] = {
                 "youtube": {
                     "player_client": ["tv"]
@@ -1566,10 +1532,30 @@ class YTSource(discord.PCMVolumeTransformer):
             try:
                 res = yt_dlp.YoutubeDL(opts_tv).extract_info(url, download=False)
                 if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                    print(f"✅ Tier 7 (TV) succeeded for {vid_id or url}!")
+                    print(f"✅ Tier 6 (TV) succeeded for {vid_id or url}!")
                     return res
             except Exception as e_tv:
-                print(f"⚠️ Tier 7 (TV) failed: {e_tv}.")
+                print(f"⚠️ Tier 6 (TV) failed: {e_tv}. Trying Tier 7 (Cookies)...")
+
+            # Tier 7: Authenticated YouTube session cookies (if loaded and valid)
+            if COOKIE_ARG and os.path.exists(COOKIE_ARG) and os.path.getsize(COOKIE_ARG) > 50:
+                opts_cookie = base_opts.copy()
+                opts_cookie["cookiefile"] = COOKIE_ARG
+                opts_cookie["format"] = "18/b/best"
+                if CHROME_TARGET:
+                    opts_cookie["impersonate"] = CHROME_TARGET
+                opts_cookie["extractor_args"] = {
+                    "youtube": {
+                        "player_client": ["web"]
+                    }
+                }
+                try:
+                    res = yt_dlp.YoutubeDL(opts_cookie).extract_info(url, download=False)
+                    if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                        print(f"✅ Tier 7 (Authenticated Cookies) succeeded for {vid_id or url}!")
+                        return res
+                except Exception as e_c:
+                    print(f"⚠️ Tier 7 (Authenticated Cookies) failed: {e_c}")
 
             return None
 
