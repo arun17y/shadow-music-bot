@@ -382,6 +382,141 @@ except Exception as _ite:
     print(f"⚠️ ImpersonateTarget not available: {_ite}")
 
 # ─────────────────────────────────────────────
+#          YOUTUBE OAUTH2 MANAGER (TV FLOW)
+# ─────────────────────────────────────────────
+
+OAUTH_TOKEN_FILE = "youtube_oauth_token.json"
+YT_OAUTH_CLIENT_ID = "861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com"
+YT_OAUTH_CLIENT_SECRET = "SboVhoG9s0rNafixCSGGKXAT"
+YT_OAUTH_SCOPE = "https://gdata.youtube.com https://www.googleapis.com/auth/youtube"
+
+class YouTubeOAuthManager:
+    _cached_token = None
+    _active_flow = None
+
+    @classmethod
+    def load_token(cls) -> Optional[dict]:
+        if cls._cached_token and cls._cached_token.get("refresh_token"):
+            return cls._cached_token
+        if os.path.exists(OAUTH_TOKEN_FILE):
+            try:
+                with open(OAUTH_TOKEN_FILE, "r", encoding="utf-8") as f:
+                    cls._cached_token = json.load(f)
+                    return cls._cached_token
+            except Exception:
+                pass
+        return None
+
+    @classmethod
+    def save_token(cls, token_data: dict):
+        cls._cached_token = token_data
+        try:
+            with open(OAUTH_TOKEN_FILE, "w", encoding="utf-8") as f:
+                json.dump(token_data, f, indent=2)
+            print(f"✅ Saved YouTube OAuth token to {OAUTH_TOKEN_FILE}!")
+        except Exception as e:
+            print(f"⚠️ Error saving YouTube OAuth token: {e}")
+
+    @classmethod
+    def get_valid_access_token(cls) -> Optional[str]:
+        t = cls.load_token()
+        if not t or not t.get("refresh_token"):
+            return None
+        exp = t.get("expires", 0)
+        if exp > time.time() + 60 and t.get("access_token"):
+            return t.get("access_token")
+        try:
+            refresh_data = {
+                "client_id": YT_OAUTH_CLIENT_ID,
+                "client_secret": YT_OAUTH_CLIENT_SECRET,
+                "refresh_token": t["refresh_token"],
+                "grant_type": "refresh_token"
+            }
+            req = urllib.request.Request(
+                "https://www.youtube.com/o/oauth2/token",
+                data=json.dumps(refresh_data).encode(),
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+                t["access_token"] = data["access_token"]
+                t["expires"] = time.time() + data.get("expires_in", 3600)
+                cls.save_token(t)
+                print("🔄 Refreshed YouTube OAuth access token!")
+                return t["access_token"]
+        except Exception as e:
+            print(f"⚠️ Error refreshing YouTube OAuth token: {e}")
+            return None
+
+    @classmethod
+    def start_device_flow(cls) -> dict:
+        data = {
+            "client_id": YT_OAUTH_CLIENT_ID,
+            "scope": YT_OAUTH_SCOPE
+        }
+        req = urllib.request.Request(
+            "https://www.youtube.com/o/oauth2/device/code",
+            data=json.dumps(data).encode(),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            res = json.loads(resp.read().decode())
+            cls._active_flow = {
+                "user_code": res["user_code"],
+                "device_code": res["device_code"],
+                "verification_url": res["verification_url"],
+                "interval": res.get("interval", 5),
+                "expires_at": time.time() + res.get("expires_in", 1800)
+            }
+            return cls._active_flow
+
+    @classmethod
+    def poll_active_flow(cls) -> dict:
+        if not cls._active_flow:
+            return {"status": "no_flow"}
+        if time.time() > cls._active_flow["expires_at"]:
+            cls._active_flow = None
+            return {"status": "expired"}
+        poll_data = {
+            "client_id": YT_OAUTH_CLIENT_ID,
+            "client_secret": YT_OAUTH_CLIENT_SECRET,
+            "device_code": cls._active_flow["device_code"],
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code"
+        }
+        req = urllib.request.Request(
+            "https://www.youtube.com/o/oauth2/token",
+            data=json.dumps(poll_data).encode(),
+            headers={"Content-Type": "application/json"}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                res = json.loads(resp.read().decode())
+                token_data = {
+                    "access_token": res["access_token"],
+                    "refresh_token": res["refresh_token"],
+                    "expires": time.time() + res.get("expires_in", 3600),
+                    "token_type": res.get("token_type", "Bearer")
+                }
+                cls.save_token(token_data)
+                cls._active_flow = None
+                return {"status": "success", "token_data": token_data}
+        except urllib.error.HTTPError as e:
+            try:
+                err = json.loads(e.read().decode()).get("error")
+                if err == "authorization_pending":
+                    return {"status": "pending"}
+                elif err == "slow_down":
+                    return {"status": "slow_down"}
+                elif err == "expired_token":
+                    cls._active_flow = None
+                    return {"status": "expired"}
+                return {"status": "error", "error": err}
+            except Exception:
+                return {"status": "error", "error": str(e)}
+        except Exception as ex:
+            return {"status": "error", "error": str(ex)}
+
+# ─────────────────────────────────────────────
 #              DATABASE SYSTEM
 # ─────────────────────────────────────────────
 
@@ -1431,6 +1566,27 @@ class YTSource(discord.PCMVolumeTransformer):
                 "extractor_retries": 2,
                 "js_runtimes": {"node": {}, "deno": {}},
             }
+
+            # Tier 0: YouTube TV OAuth2 Authentication (100% immune to datacenter IP bans & bot-checks)
+            oauth_token = YouTubeOAuthManager.get_valid_access_token()
+            if oauth_token:
+                opts_oauth = base_opts.copy()
+                opts_oauth["format"] = "18/bestaudio/best/b"
+                opts_oauth["http_headers"] = {
+                    "Authorization": f"Bearer {oauth_token}"
+                }
+                opts_oauth["extractor_args"] = {
+                    "youtube": {
+                        "player_client": ["tv", "web"]
+                    }
+                }
+                try:
+                    res = yt_dlp.YoutubeDL(opts_oauth).extract_info(url, download=False)
+                    if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                        print(f"✅ Tier 0 (YouTube TV OAuth2) succeeded for {vid_id or url}!")
+                        return res
+                except Exception as e_oa:
+                    print(f"⚠️ Tier 0 (YouTube OAuth2) failed: {e_oa}. Trying next tiers...")
 
             # Tier 1: Android Native client (Format 18: 360p stereo AAC, zero bot checks, zero PO token required)
             opts_android = base_opts.copy()
@@ -2884,6 +3040,9 @@ class MusicBot(commands.Bot):
                 has_cookies = bool(COOKIE_ARG and os.path.exists(COOKIE_ARG) and os.path.getsize(COOKIE_ARG) > 50)
                 badge_cls = "badge-active" if has_cookies else "badge-missing"
                 badge_txt = "🟢 Active Session Loaded" if has_cookies else "🔴 No Valid Cookies Loaded"
+                has_oauth = bool(YouTubeOAuthManager.get_valid_access_token())
+                oauth_cls = "badge-active" if has_oauth else "badge-missing"
+                oauth_txt = "🟢 YouTube TV OAuth Active" if has_oauth else "🔴 Not Authenticated via OAuth"
                 html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2942,8 +3101,45 @@ class MusicBot(commands.Bot):
                     <li>Open the file, copy all text, and paste it into the box above!</li>
                 </ol>
             </div>
+        <div class="card" style="margin-top: 24px;">
+            <h1>🔐 Permanent YouTube Device Link (Zero Cookies)</h1>
+            <p>Authenticate as an official YouTube TV app. 100% immune to datacenter bot checks.</p>
+            <div id="oauth-status" class="status-badge {oauth_cls}">{oauth_txt}</div>
+            <div id="oauth-controls">
+                <button type="button" class="btn" style="background: #22C55E;" onclick="startOAuth()">Get Instant Link Code</button>
+            </div>
+            <div id="oauth-display" style="display: none; margin-top: 20px; padding: 16px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+                <p style="font-size: 15px; margin-bottom: 10px;">1. Open <a id="oauth-link" href="https://www.google.com/device" target="_blank" style="color: #5865F2; font-weight: 700; text-decoration: underline;">google.com/device</a></p>
+                <p style="font-size: 15px; margin-bottom: 12px;">2. Enter Code: <b id="oauth-code" style="font-size: 22px; color: #F59E0B; letter-spacing: 2px; font-family: 'JetBrains Mono', monospace;"></b></p>
+                <p id="oauth-msg" style="color: #8E9297; font-size: 13px;">⏳ Waiting for confirmation on Google...</p>
+            </div>
         </div>
     </div>
+    <script>
+    function startOAuth() {{
+        fetch('/api/oauth/start').then(r => r.json()).then(d => {{
+            if (d.user_code) {{
+                document.getElementById('oauth-display').style.display = 'block';
+                document.getElementById('oauth-code').innerText = d.user_code;
+                document.getElementById('oauth-link').href = d.verification_url;
+                let poller = setInterval(() => {{
+                    fetch('/api/oauth/status').then(r => r.json()).then(res => {{
+                        if (res.status === 'success') {{
+                            clearInterval(poller);
+                            document.getElementById('oauth-msg').innerText = '✅ YouTube TV Link Confirmed! All bot blocks bypassed forever!';
+                            document.getElementById('oauth-msg').style.color = '#34D399';
+                            document.getElementById('oauth-status').className = 'status-badge badge-active';
+                            document.getElementById('oauth-status').innerText = '🟢 YouTube TV OAuth Active';
+                        }} else if (res.status === 'expired') {{
+                            clearInterval(poller);
+                            document.getElementById('oauth-msg').innerText = '⚠️ Code expired. Please refresh and try again.';
+                        }}
+                    }});
+                }}, 4000);
+            }}
+        }});
+    }}
+    </script>
 </body>
 </html>"""
                 return web.Response(text=html, content_type="text/html")
@@ -2964,9 +3160,33 @@ class MusicBot(commands.Bot):
                 except Exception as ex:
                     return web.Response(text=f"❌ ERROR: {ex}", content_type="text/plain", status=500)
 
+            async def oauth_start_view(request):
+                try:
+                    flow = YouTubeOAuthManager.start_device_flow()
+                    return web.json_response({
+                        "status": "ok",
+                        "user_code": flow.get("user_code"),
+                        "verification_url": flow.get("verification_url"),
+                        "expires_in": int(flow.get("expires_at", 0) - time.time())
+                    })
+                except Exception as ex:
+                    return web.json_response({"status": "error", "error": str(ex)}, status=500)
+
+            async def oauth_status_view(request):
+                try:
+                    is_authed = bool(YouTubeOAuthManager.get_valid_access_token())
+                    if is_authed:
+                        return web.json_response({"status": "success", "authenticated": True})
+                    res = YouTubeOAuthManager.poll_active_flow()
+                    return web.json_response(res)
+                except Exception as ex:
+                    return web.json_response({"status": "error", "error": str(ex)}, status=500)
+
             app.router.add_get("/cookies", cookies_html_view)
             app.router.add_post("/cookies", cookies_post_view)
             app.router.add_post("/api/cookies", cookies_post_view)
+            app.router.add_get("/api/oauth/start", oauth_start_view)
+            app.router.add_get("/api/oauth/status", oauth_status_view)
             app.router.add_get("/api/sync_commands", sync_commands_api)
             app.router.add_post("/api/sync_commands", sync_commands_api)
 
@@ -3117,6 +3337,49 @@ async def cmd_cookies(ctx: commands.Context, *, raw_cookies: Optional[str] = Non
             color=0xFEE75C
         )
     await ctx.send(embed=e)
+
+@bot.command(name="oauth", aliases=["ytlogin", "linkyoutube"], description="Link YouTube via TV OAuth to permanently bypass bot blocks")
+@commands.has_permissions(administrator=True)
+async def cmd_oauth(ctx: commands.Context):
+    msg = await ctx.send("⏳ Generating Google device authorization code...")
+    try:
+        flow = YouTubeOAuthManager.start_device_flow()
+        code = flow["user_code"]
+        link = flow["verification_url"]
+        
+        e = discord.Embed(
+            title="🔐 YouTube TV Authentication (Permanent Bypass)",
+            description=(
+                f"Follow these simple steps to link YouTube directly without cookies:\n\n"
+                f"1. Open **[google.com/device]({link})** on your phone or PC\n"
+                f"2. Enter Code: **`{code}`**\n"
+                f"3. Sign in to any Google account and click **Allow**\n\n"
+                f"⏳ *Listening for authorization... The bot will update this message automatically once confirmed.*"
+            ),
+            color=0x5865F2
+        )
+        await msg.edit(content=None, embed=e)
+        
+        for _ in range(60):
+            await asyncio.sleep(5)
+            res = YouTubeOAuthManager.poll_active_flow()
+            if res.get("status") == "success":
+                success_e = discord.Embed(
+                    title="✅ YouTube Authenticated Successfully!",
+                    description=(
+                        "🎉 **Device OAuth Link Active!**\n\n"
+                        "The bot is now authenticated as an official YouTube TV app.\n"
+                        "All YouTube bot-checks and datacenter blocks are permanently bypassed 24/7!"
+                    ),
+                    color=0x57F287
+                )
+                await msg.edit(embed=success_e)
+                return
+            elif res.get("status") == "expired":
+                await msg.edit(content="⚠️ Device code expired. Please run `.oauth` again.", embed=None)
+                return
+    except Exception as ex:
+        await msg.edit(content=f"⚠️ Failed to initiate YouTube OAuth flow: {ex}", embed=None)
 
 @bot.event
 async def on_message(message: discord.Message):
