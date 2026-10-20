@@ -1002,14 +1002,13 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": None,
+    "cookiefile": COOKIE_ARG,
     "socket_timeout": 15,
     "retries": 2,
     "extractor_retries": 2,
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "ios"],
-            "player_skip": ["webpage"]
+            "player_client": ["android", "ios", "web"]
         }
     },
 }
@@ -1270,38 +1269,23 @@ class YTSource(discord.PCMVolumeTransformer):
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = False
         opts["format"] = "18/bestaudio/best/b"
-        opts["cookiefile"] = None
         opts["socket_timeout"] = 15
 
         def run():
             try:
                 return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
             except Exception as e:
-                print(f"⚠️ Primary Android/iOS extract failed ({e}). Attempting fallback...")
+                print(f"⚠️ Primary extract failed ({e}). Attempting fallback...")
                 try:
                     fallback_opts = opts.copy()
-                    fallback_opts["format"] = "18/bestaudio/best/b"
+                    fallback_opts["cookiefile"] = None if opts.get("cookiefile") else COOKIE_ARG
                     fallback_opts["extractor_args"] = {
                         "youtube": {
-                            "player_client": ["android", "ios", "web_embedded"],
-                            "player_skip": ["webpage"]
+                            "player_client": ["android", "ios"]
                         }
                     }
                     return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
                 except Exception as fb_err:
-                    if COOKIE_ARG and os.path.exists(COOKIE_ARG) and os.path.getsize(COOKIE_ARG) > 50:
-                        try:
-                            cookie_opts = opts.copy()
-                            cookie_opts["cookiefile"] = COOKIE_ARG
-                            cookie_opts["format"] = "18/bestaudio/best/b"
-                            cookie_opts["extractor_args"] = {
-                                "youtube": {
-                                    "player_client": ["web", "android"],
-                                }
-                            }
-                            return yt_dlp.YoutubeDL(cookie_opts).extract_info(url, download=False)
-                        except Exception:
-                            pass
                     print(f"❌ YouTube fallback failed ({fb_err})")
                     raise e
 
@@ -1314,10 +1298,15 @@ class YTSource(discord.PCMVolumeTransformer):
             raise Exception("No stream URL extracted!")
             
         headers = data.get("http_headers", {})
-        ua = headers.get("User-Agent") or headers.get("user-agent") or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        if "c=ANDROID_VR" in stream_url:
+            ua = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
+        elif "c=ANDROID" in stream_url:
+            ua = "com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip"
+        else:
+            ua = headers.get("User-Agent") or headers.get("user-agent") or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         
         ffmpeg_opts = get_ffmpeg_options(active_filter, speed, pitch)
-        ffmpeg_opts["before_options"] += f' -user_agent "{ua}"'
+        ffmpeg_opts["before_options"] += f' -user_agent "{ua}" -headers "Referer: https://www.youtube.com/"'
         
         if seek_time > 0:
             ffmpeg_opts["before_options"] += f" -ss {seek_time}"
