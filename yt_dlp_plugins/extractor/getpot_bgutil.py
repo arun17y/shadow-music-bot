@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-__version__ = '2.0.2'
+__version__ = '0.8.1'
 
 import abc
 import json
-import os
-from typing import TypeVar
 
 from yt_dlp.extractor.youtube.pot.provider import (
     ExternalRequestFeature,
@@ -17,12 +15,12 @@ from yt_dlp.extractor.youtube.pot.utils import WEBPO_CLIENTS
 from yt_dlp.utils import js_to_json
 from yt_dlp.utils.traversal import traverse_obj
 
-T = TypeVar('T')
-
 
 class BgUtilPTPBase(PoTokenProvider, abc.ABC):
     PROVIDER_VERSION = __version__
-    BUG_REPORT_LOCATION = 'https://github.com/Brainicism/bgutil-ytdlp-pot-provider/issues'
+    BUG_REPORT_LOCATION = (
+        'https://github.com/jim60105/bgutil-ytdlp-pot-provider/issues'
+    )
     _SUPPORTED_EXTERNAL_REQUEST_FEATURES = (
         ExternalRequestFeature.PROXY_SCHEME_HTTP,
         ExternalRequestFeature.PROXY_SCHEME_HTTPS,
@@ -40,6 +38,8 @@ class BgUtilPTPBase(PoTokenProvider, abc.ABC):
         PoTokenContext.SUBS,
     )
     _GETPOT_TIMEOUT = 20.0
+    _GET_SERVER_VSN_TIMEOUT = 5.0
+    _MIN_NODE_VSN = (18, 0, 0)
 
     def _info_and_raise(self, msg, raise_from=None):
         self.logger.info(msg)
@@ -49,43 +49,6 @@ class BgUtilPTPBase(PoTokenProvider, abc.ABC):
         self.logger.warning(msg, once=once)
         raise PoTokenProviderRejectedRequest(msg) from raise_from
 
-    def _script_config_arg(self, key: str, default: T = None, *, casesense=True) -> str | T:
-        return self.ie._configuration_arg(
-            ie_key='youtubepot-bgutilscript', key=key, default=[default], casesense=casesense)[0]
-
-    @staticmethod
-    def _resolve_script_path(*ps: str):
-        # realpath resolves symlinks and internally calls abspath
-        return os.path.realpath(
-            os.path.expanduser(os.path.expandvars(os.path.join(*ps))))
-
-    def _script_path_provided(self) -> str | None:
-        if server_home := self._script_config_arg('server_home'):
-            return self._resolve_script_path(server_home)
-
-        if script_path := self._script_config_arg('script_path'):
-            return self._resolve_script_path(script_path, os.pardir, os.pardir)
-
-        return None
-
-    def _check_version(self, got_version, *, default='unknown', name):
-        def _major(version):
-            return version.split('.', 1)[0]
-
-        if got_version != self.PROVIDER_VERSION:
-            self.logger.warning(
-                f'The provider plugin and the {name} are on different versions, '
-                f'this may cause compatibility issues. '
-                f'Please ensure they are on the same version. '
-                f'Otherwise, help will NOT be provided for any issues that arise. '
-                f'(plugin: {self.PROVIDER_VERSION}, {name}: {got_version or default})',
-                once=True)
-
-        if not got_version or _major(got_version) != _major(self.PROVIDER_VERSION):
-            self._warn_and_raise(
-                f'Plugin and {name} major versions are mismatched. '
-                f'Update both the plugin and the {name} to the same version to proceed.')
-
     def _get_attestation(self, webpage: str | None):
         if not webpage:
             return None
@@ -94,7 +57,10 @@ class BgUtilPTPBase(PoTokenProvider, abc.ABC):
                 self.ie._search_regex(
                     r'''(?sx)window\s*\.\s*ytAtN\s*\(\s*
                         (?P<js>\{.+?}\s*)
-                    \s*\)\s*;''', webpage, 'ytAtP challenge', default=None),
+                    \s*\)\s*;''',
+                    webpage,
+                    'ytAtN challenge',
+                    default=None),
                 ({js_to_json}, {json.loads}, 'R'))
             or traverse_obj(
                 self.ie._search_regex(
@@ -103,9 +69,11 @@ class BgUtilPTPBase(PoTokenProvider, abc.ABC):
                             \\.|
                             (?!(?P=q)).
                         )*
-                    (?P=q))\s*;''', webpage, 'ytAtR challenge', default=None),
+                    (?P=q))\s*;''',
+                    webpage,
+                    'ytAtR challenge',
+                    default=None),
                 ({js_to_json}, {json.loads})))
-
         if att_txt := traverse_obj(raw_cd, ({json.loads}, 'bgChallenge')):
             return att_txt
         self.logger.warning('Failed to extract initial attestation from the webpage')

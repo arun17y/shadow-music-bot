@@ -298,37 +298,56 @@ if not BOT_TOKEN:
         BOT_TOKEN = base64.b64decode("TVRVek16RXdORGN4TXpBMk5UVTJOakkwT1EuRzFiWTJyLjFPUTYzYmVMUmFSYUJzRWh0UVZwMHNlU3E1UzJ0aWMzUlBuVzdz").decode()
     except Exception:
         pass
-# Token is kept in memory / environment variables
+
+if os.path.exists(CONFIG_FILE) and BOT_TOKEN:
+    try:
+        with open(CONFIG_FILE, "r") as f:
+            cdata = json.load(f)
+        if not cdata.get("token"):
+            cdata["token"] = BOT_TOKEN
+            with open(CONFIG_FILE, "w") as f:
+                json.dump(cdata, f, indent=4)
+            print("✅ Auto-populated token into config.json")
+    except Exception:
+        pass
 
 
 COOKIE_ARG = None
 if os.path.exists(COOKIES_FILE):
     try:
+        # Sanitize cookie file format so http.cookiejar never crashes on malformed lines
         with open(COOKIES_FILE, "r", encoding="utf-8", errors="ignore") as _cf:
             _raw_lines = _cf.readlines()
+        _clean_lines = ["# Netscape HTTP Cookie File\n# Cleaned by Shadow Cheats Music\n"]
         has_yt_login = False
         for _l in _raw_lines:
             _ls = _l.strip()
             if not _ls or _ls.startswith("#"):
                 continue
             _parts = _ls.split("\t")
-            if len(_parts) >= 7 and any(k in _parts[5] for k in ["LOGIN_INFO", "__Secure-3PSID", "__Secure-1PSID"]):
-                has_yt_login = True
+            if len(_parts) >= 7:
+                if _parts[0].startswith("."):
+                    _parts[1] = "TRUE"
+                _clean_lines.append("\t".join(_parts) + "\n")
+                if any(k in _parts[5] for k in ["LOGIN_INFO", "__Secure-3PSID", "__Secure-1PSID", "SID"]):
+                    has_yt_login = True
+        with open(COOKIES_FILE, "w", encoding="utf-8") as _cf:
+            _cf.writelines(_clean_lines)
         if has_yt_login:
             COOKIE_ARG = COOKIES_FILE
             print(f"✅ Loaded verified YouTube account cookies from {COOKIES_FILE}")
         else:
             COOKIE_ARG = None
-            print(f"ℹ️ {COOKIES_FILE} is clean. Using direct mobile InnerTube clients.")
+            print(f"ℹ️ {COOKIES_FILE} does not contain authenticated YouTube session cookies. Using Chrome TLS impersonation.")
     except Exception as _ce:
+        print(f"⚠️ Error sanitizing {COOKIES_FILE}: {_ce}")
         COOKIE_ARG = None
-        print(f"⚠️ Error reading {COOKIES_FILE}: {_ce}")
 else:
-    print(f"ℹ️ {COOKIES_FILE} not found. Using direct mobile InnerTube clients.")
+    print(f"ℹ️ {COOKIES_FILE} not found. YouTube streaming will use Chrome TLS impersonation.")
 
 try:
     from yt_dlp.networking.impersonate import ImpersonateTarget
-    CHROME_TARGET = ImpersonateTarget.from_str("chrome")
+    CHROME_TARGET = ImpersonateTarget("chrome")
     print("🚀 Chrome TLS impersonation target active for direct YouTube extraction.")
 except Exception as _ite:
     CHROME_TARGET = None
@@ -987,21 +1006,21 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "bestaudio/18/best",
+    "format": "bestaudio/18/best/b",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": COOKIE_ARG,
-    "impersonate": CHROME_TARGET,
-    "socket_timeout": 15,
-    "retries": 2,
-    "extractor_retries": 2,
+    "cookiefile": None,
+    "socket_timeout": 10,
+    "retries": 1,
+    "extractor_retries": 1,
     "extractor_args": {
-        "youtubepot-bgutilhttp": {
-            "base_url": ["http://127.0.0.1:4416"]
+        "youtube": {
+            "player_client": ["android", "web_embedded"],
+            "player_skip": ["webpage"]
         }
     },
 }
@@ -1125,16 +1144,7 @@ class YTSource(discord.PCMVolumeTransformer):
         q = f"ytsearch5:{query}" if is_search else query
             
         def run():
-            try:
-                return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
-            except Exception as e:
-                if is_search:
-                    print(f"⚠️ Search failed on YouTube ({e}). Falling back to SoundCloud...")
-                    sc_opts = opts.copy()
-                    sc_opts["extract_flat"] = True
-                    sc_opts["ignoreerrors"] = True
-                    return yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{query}", download=False)
-                raise e
+            return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
 
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
@@ -1194,31 +1204,7 @@ class YTSource(discord.PCMVolumeTransformer):
             q = query
         
         def run():
-            try:
-                return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
-            except Exception as e:
-                if is_search:
-                    print(f"⚠️ Search failed on YouTube ({e}). Falling back to SoundCloud...")
-                    sc_opts = opts.copy()
-                    return yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{query}", download=False)
-                else:
-                    if "youtube.com" in query or "youtu.be" in query:
-                        try:
-                            import urllib.request, json
-                            oe_url = f"https://www.youtube.com/oembed?url={query}&format=json"
-                            req = urllib.request.Request(oe_url, headers={"User-Agent": "Mozilla/5.0"})
-                            with urllib.request.urlopen(req, timeout=3) as resp:
-                                d = json.loads(resp.read().decode())
-                                o_title = d.get("title", "")
-                                if d.get("author_name"):
-                                    o_title += " " + d.get("author_name")
-                                sc_opts = opts.copy()
-                                sc_opts["extract_flat"] = True
-                                sc_opts["ignoreerrors"] = True
-                                return yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{o_title}", download=False)
-                        except Exception:
-                            pass
-                    raise e
+            return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
 
         data = await loop.run_in_executor(None, run)
         if not data:
@@ -1294,75 +1280,26 @@ class YTSource(discord.PCMVolumeTransformer):
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = False
-        opts["format"] = "bestaudio/18/best"
-        opts["socket_timeout"] = 15
+        opts["format"] = "18/bestaudio/best/b"
+        opts["cookiefile"] = None
+        opts["socket_timeout"] = 10
 
         def run():
             try:
                 return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
             except Exception as e:
-                print(f"⚠️ Primary extract failed ({e}). Attempting fallback...")
+                print(f"⚠️ Primary YouTube extract failed ({e}). Attempting fallback...")
                 try:
                     fallback_opts = opts.copy()
                     fallback_opts["extractor_args"] = {
-                        "youtubepot-bgutilhttp": {
-                            "base_url": ["http://127.0.0.1:4416"]
-                        },
                         "youtube": {
-                            "player_client": ["android", "ios", "mweb"]
+                            "player_client": ["android", "tv"],
+                            "player_skip": ["webpage"]
                         }
                     }
                     return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
                 except Exception as fb_err:
-                    print(f"❌ YouTube fallback failed ({fb_err}). Attempting SoundCloud audio mirror...")
-                    stitle = track_title
-                    if not stitle and ("youtube.com" in url or "youtu.be" in url):
-                        try:
-                            import urllib.request, json
-                            oe_url = f"https://www.youtube.com/oembed?url={url}&format=json"
-                            req = urllib.request.Request(oe_url, headers={"User-Agent": "Mozilla/5.0"})
-                            with urllib.request.urlopen(req, timeout=3) as resp:
-                                d = json.loads(resp.read().decode())
-                                stitle = d.get("title", "")
-                                if d.get("author_name"):
-                                    stitle += " " + d.get("author_name")
-                        except Exception:
-                            pass
-                    if stitle:
-                        import re
-                        clean_title = re.sub(r' - Topic|\(From [^\)]+\)|\[[^\]]+\]|\(Official [^\)]+\)|Official Video|Audio', '', stitle, flags=re.IGNORECASE).strip()
-                        candidates = [clean_title]
-                        base_title = clean_title.split(' - ')[0].split('  ')[0].strip()
-                        if base_title and base_title not in candidates:
-                            candidates.append(base_title)
-                    else:
-                        candidates = [url]
-                    
-                    sc_opts = {
-                        "format": "bestaudio/best",
-                        "quiet": True,
-                        "extract_flat": True,
-                        "ignoreerrors": True,
-                        "socket_timeout": 10
-                    }
-                    try:
-                        for q in candidates:
-                            sc_search = yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{q}", download=False)
-                            entries = sc_search.get("entries", []) if sc_search else []
-                            for entry in entries:
-                                if not entry: continue
-                                track_url = entry.get("url") or entry.get("webpage_url")
-                                if not track_url: continue
-                                try:
-                                    play_opts = {"format": "bestaudio/best", "quiet": True, "socket_timeout": 10}
-                                    play_data = yt_dlp.YoutubeDL(play_opts).extract_info(track_url, download=False)
-                                    if play_data and play_data.get("url"):
-                                        print(f"✅ Successfully routed track to audio stream: {play_data.get('title')}")
-                                        return play_data
-                                except Exception:
-                                    continue
-                    except Exception as sc_err:
-                        print(f"❌ SoundCloud mirror search failed: {sc_err}")
+                    print(f"❌ YouTube fallback failed ({fb_err})")
                     raise e
 
         data = await loop.run_in_executor(None, run)
@@ -1924,7 +1861,7 @@ class MusicBot(commands.Bot):
     async def keep_alive_pinger(self):
         """24/7 Free Hosting Keepalive: Pings self URL every 5 minutes to prevent Render from sleeping."""
         await self.wait_until_ready()
-        target_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://shadow-cheats-music-eu.onrender.com"
+        target_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://shadow-cheats-music-sg.onrender.com"
         ping_endpoint = f"{target_url.rstrip('/')}/health"
         print(f"🔄 24/7 Keepalive self-pinger initialized for {ping_endpoint} (interval: 300s)")
         
