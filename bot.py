@@ -1125,7 +1125,14 @@ class YTSource(discord.PCMVolumeTransformer):
         q = f"ytsearch5:{query}" if is_search else query
             
         def run():
-            return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
+            try:
+                return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
+            except Exception as e:
+                if is_search:
+                    print(f"⚠️ Search failed on YouTube ({e}). Falling back to SoundCloud...")
+                    sc_opts = opts.copy()
+                    return yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{query}", download=False)
+                raise e
 
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
@@ -1185,7 +1192,29 @@ class YTSource(discord.PCMVolumeTransformer):
             q = query
         
         def run():
-            return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
+            try:
+                return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
+            except Exception as e:
+                if is_search:
+                    print(f"⚠️ Search failed on YouTube ({e}). Falling back to SoundCloud...")
+                    sc_opts = opts.copy()
+                    return yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{query}", download=False)
+                else:
+                    if "youtube.com" in query or "youtu.be" in query:
+                        try:
+                            import urllib.request, json
+                            oe_url = f"https://www.youtube.com/oembed?url={query}&format=json"
+                            req = urllib.request.Request(oe_url, headers={"User-Agent": "Mozilla/5.0"})
+                            with urllib.request.urlopen(req, timeout=3) as resp:
+                                d = json.loads(resp.read().decode())
+                                o_title = d.get("title", "")
+                                if d.get("author_name"):
+                                    o_title += " " + d.get("author_name")
+                                sc_opts = opts.copy()
+                                return yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{o_title}", download=False)
+                        except Exception:
+                            pass
+                    raise e
 
         data = await loop.run_in_executor(None, run)
         if not data:
@@ -1281,7 +1310,38 @@ class YTSource(discord.PCMVolumeTransformer):
                     }
                     return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
                 except Exception as fb_err:
-                    print(f"❌ YouTube fallback failed ({fb_err})")
+                    print(f"❌ YouTube fallback failed ({fb_err}). Attempting SoundCloud audio mirror...")
+                    stitle = track_title
+                    if not stitle and ("youtube.com" in url or "youtu.be" in url):
+                        try:
+                            import urllib.request, json
+                            oe_url = f"https://www.youtube.com/oembed?url={url}&format=json"
+                            req = urllib.request.Request(oe_url, headers={"User-Agent": "Mozilla/5.0"})
+                            with urllib.request.urlopen(req, timeout=3) as resp:
+                                d = json.loads(resp.read().decode())
+                                stitle = d.get("title", "")
+                                if d.get("author_name"):
+                                    stitle += " " + d.get("author_name")
+                        except Exception:
+                            pass
+                    if not stitle:
+                        stitle = url
+                    
+                    sc_opts = {
+                        "format": "bestaudio/best",
+                        "quiet": True,
+                        "extract_flat": False,
+                        "socket_timeout": 10
+                    }
+                    try:
+                        sc_data = yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{stitle}", download=False)
+                        if sc_data and "entries" in sc_data and len(sc_data["entries"]) > 0:
+                            for entry in sc_data["entries"]:
+                                if entry and entry.get("url"):
+                                    print(f"✅ Successfully routed track to audio stream: {entry.get('title')}")
+                                    return entry
+                    except Exception as sc_err:
+                        print(f"❌ SoundCloud mirror search failed: {sc_err}")
                     raise e
 
         data = await loop.run_in_executor(None, run)
