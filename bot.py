@@ -1013,14 +1013,17 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": None,
-    "socket_timeout": 10,
-    "retries": 1,
-    "extractor_retries": 1,
+    "cookiefile": COOKIE_ARG,
+    "impersonate": CHROME_TARGET,
+    "socket_timeout": 12,
+    "retries": 2,
+    "extractor_retries": 2,
     "extractor_args": {
+        "youtubepot-bgutilhttp": {
+            "base_url": ["http://127.0.0.1:4416"]
+        },
         "youtube": {
-            "player_client": ["android", "web_embedded"],
-            "player_skip": ["webpage"]
+            "player_client": ["web", "mweb", "android_vr", "android"]
         }
     },
 }
@@ -1281,8 +1284,7 @@ class YTSource(discord.PCMVolumeTransformer):
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = False
         opts["format"] = "18/bestaudio/best/b"
-        opts["cookiefile"] = None
-        opts["socket_timeout"] = 10
+        opts["socket_timeout"] = 12
 
         def run():
             try:
@@ -1291,10 +1293,13 @@ class YTSource(discord.PCMVolumeTransformer):
                 print(f"⚠️ Primary YouTube extract failed ({e}). Attempting fallback...")
                 try:
                     fallback_opts = opts.copy()
+                    fallback_opts["cookiefile"] = None
                     fallback_opts["extractor_args"] = {
+                        "youtubepot-bgutilhttp": {
+                            "base_url": ["http://127.0.0.1:4416"]
+                        },
                         "youtube": {
-                            "player_client": ["android", "tv"],
-                            "player_skip": ["webpage"]
+                            "player_client": ["android_vr", "android", "tv"]
                         }
                     }
                     return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
