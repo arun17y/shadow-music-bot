@@ -1021,7 +1021,7 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": None,
+    "cookiefile": COOKIE_ARG,
     "socket_timeout": 12,
     "retries": 2,
     "extractor_retries": 2,
@@ -1298,7 +1298,7 @@ class YTSource(discord.PCMVolumeTransformer):
     @classmethod
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         def run():
-            # Tier 1: Chrome TLS Impersonation + OAuth2 + Android/Web_Embedded/VisionOS (No cookies needed)
+            # Tier 1: Authenticated with Cookies + Chrome TLS + POT Provider
             tier1_opts = {
                 "format": "bestaudio/18/140/251/250/249/b/best",
                 "quiet": True,
@@ -1307,10 +1307,15 @@ class YTSource(discord.PCMVolumeTransformer):
                 "socket_timeout": 12,
                 "retries": 2,
                 "extractor_retries": 2,
-                "cookiefile": None,
+                "cookiefile": COOKIE_ARG,
+                "js_runtimes": {"deno": {}, "node": {}},
+                "remote_components": ["ejs:github", "ejs:npm"],
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["android", "web_embedded", "visionos"]
+                        "player_client": ["visionos", "web", "mweb"]
+                    },
+                    "youtubepot-bgutilhttp": {
+                        "base_url": ["http://127.0.0.1:4416"]
                     }
                 }
             }
@@ -1323,36 +1328,33 @@ class YTSource(discord.PCMVolumeTransformer):
             except Exception as e1:
                 print(f"⚠️ Tier 1 extraction failed: {e1}")
 
-            # Tier 2: Authenticated with Cookies + Chrome TLS (for age-gated/member content)
-            if COOKIE_ARG:
-                tier2_opts = {
-                    "format": "bestaudio/18/140/251/250/249/b/best",
-                    "quiet": True,
-                    "no_warnings": True,
-                    "nocheckcertificate": True,
-                    "cookiefile": COOKIE_ARG,
-                    "socket_timeout": 12,
-                    "js_runtimes": {"deno": {}, "node": {}},
-                    "remote_components": ["ejs:github", "ejs:npm"],
-                    "extractor_args": {
-                        "youtube": {
-                            "player_client": ["visionos", "web", "mweb"]
-                        },
-                        "youtubepot-bgutilhttp": {
-                            "base_url": ["http://127.0.0.1:4416"]
-                        }
+            # Tier 2: Android / Web_Embedded + Cookies + POT Provider
+            tier2_opts = {
+                "format": "bestaudio/18/140/251/250/249/b/best",
+                "quiet": True,
+                "no_warnings": True,
+                "nocheckcertificate": True,
+                "cookiefile": COOKIE_ARG,
+                "socket_timeout": 12,
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["android", "web_embedded"]
+                    },
+                    "youtubepot-bgutilhttp": {
+                        "base_url": ["http://127.0.0.1:4416"]
                     }
                 }
-                if CHROME_TARGET:
-                    tier2_opts["impersonate"] = CHROME_TARGET
-                try:
-                    data = yt_dlp.YoutubeDL(tier2_opts).extract_info(url, download=False)
-                    if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
-                        return data
-                except Exception as e2:
-                    print(f"⚠️ Tier 2 extraction failed: {e2}")
+            }
+            if CHROME_TARGET:
+                tier2_opts["impersonate"] = CHROME_TARGET
+            try:
+                data = yt_dlp.YoutubeDL(tier2_opts).extract_info(url, download=False)
+                if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
+                    return data
+            except Exception as e2:
+                print(f"⚠️ Tier 2 extraction failed: {e2}")
 
-            # Tier 3: POT Provider fallback
+            # Tier 3: Unauthenticated TV / iOS / Embedded fallback
             tier3_opts = {
                 "format": "bestaudio/18/140/251/250/249/b/best",
                 "quiet": True,
@@ -1362,10 +1364,7 @@ class YTSource(discord.PCMVolumeTransformer):
                 "socket_timeout": 12,
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["web_embedded", "android", "mweb"]
-                    },
-                    "youtubepot-bgutilhttp": {
-                        "base_url": ["http://127.0.0.1:4416"]
+                        "player_client": ["tv_embedded", "ios", "mweb"]
                     }
                 }
             }
