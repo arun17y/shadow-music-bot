@@ -1014,7 +1014,7 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "bestaudio/18/best/b",
+    "format": "bestaudio/251/18/best/b",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
@@ -1022,16 +1022,17 @@ YTDL_OPTIONS = {
     "no_warnings": True,
     "default_search": "ytsearch",
     "cookiefile": None,
-    "socket_timeout": 10,
+    "socket_timeout": 12,
     "retries": 2,
     "extractor_retries": 2,
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "web_embedded"],
-            "player_skip": ["webpage"]
+            "player_client": ["android", "web_embedded", "visionos"]
         }
     },
 }
+if CHROME_TARGET:
+    YTDL_OPTIONS["impersonate"] = CHROME_TARGET
 
 # ─────────────────────────────────────────────
 #                 EMBED HELPERS (MODERN UI)
@@ -1297,31 +1298,32 @@ class YTSource(discord.PCMVolumeTransformer):
     @classmethod
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         def run():
-            # Tier 1: Proven 16 October direct engine (Android + Web Embedded, skips webpage HTML download)
+            # Tier 1: Chrome TLS Impersonation + OAuth2 + Android/Web_Embedded/VisionOS (No cookies needed)
             tier1_opts = {
-                "format": "18/bestaudio/best/b",
+                "format": "bestaudio/251/18/best/b",
                 "quiet": True,
                 "no_warnings": True,
                 "nocheckcertificate": True,
-                "socket_timeout": 10,
+                "socket_timeout": 12,
                 "retries": 2,
                 "extractor_retries": 2,
                 "cookiefile": None,
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["android", "web_embedded"],
-                        "player_skip": ["webpage"]
+                        "player_client": ["android", "web_embedded", "visionos"]
                     }
                 }
             }
+            if CHROME_TARGET:
+                tier1_opts["impersonate"] = CHROME_TARGET
             try:
                 data = yt_dlp.YoutubeDL(tier1_opts).extract_info(url, download=False)
                 if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
                     return data
             except Exception as e1:
-                print(f"⚠️ Tier 1 (16 Oct Engine) extraction failed: {e1}")
+                print(f"⚠️ Tier 1 extraction failed: {e1}")
 
-            # Tier 2: Authenticated with Cookies + Chrome TLS Impersonation (for age-gated/member content)
+            # Tier 2: Authenticated with Cookies + Chrome TLS (for age-gated/member content)
             if COOKIE_ARG:
                 tier2_opts = {
                     "format": "bestaudio/251/18/best/b",
@@ -1348,11 +1350,11 @@ class YTSource(discord.PCMVolumeTransformer):
                     if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
                         return data
                 except Exception as e2:
-                    print(f"⚠️ Tier 2 (Authenticated Cookies) extraction failed: {e2}")
+                    print(f"⚠️ Tier 2 extraction failed: {e2}")
 
-            # Tier 3: VisionOS Direct without cookies
+            # Tier 3: POT Provider fallback
             tier3_opts = {
-                "format": "bestaudio/251/18/best/b",
+                "format": "bestaudio/18/best/b",
                 "quiet": True,
                 "no_warnings": True,
                 "nocheckcertificate": True,
@@ -1360,10 +1362,15 @@ class YTSource(discord.PCMVolumeTransformer):
                 "socket_timeout": 12,
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["visionos", "android"]
+                        "player_client": ["web_embedded", "android", "mweb"]
+                    },
+                    "youtubepot-bgutilhttp": {
+                        "base_url": ["http://127.0.0.1:4416"]
                     }
                 }
             }
+            if CHROME_TARGET:
+                tier3_opts["impersonate"] = CHROME_TARGET
             try:
                 return yt_dlp.YoutubeDL(tier3_opts).extract_info(url, download=False)
             except Exception as e3:
