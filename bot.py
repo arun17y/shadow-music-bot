@@ -1021,23 +1021,17 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": COOKIE_ARG,
+    "cookiefile": None,
     "socket_timeout": 10,
-    "retries": 1,
-    "extractor_retries": 1,
-    "js_runtimes": {"deno": {}, "node": {}},
-    "remote_components": ["ejs:github", "ejs:npm"],
+    "retries": 2,
+    "extractor_retries": 2,
     "extractor_args": {
         "youtube": {
-            "player_client": ["web", "mweb", "android_vr", "android"]
-        },
-        "youtubepot-bgutilhttp": {
-            "base_url": ["http://127.0.0.1:4416"]
+            "player_client": ["android", "web_embedded"],
+            "player_skip": ["webpage"]
         }
     },
 }
-if CHROME_TARGET:
-    YTDL_OPTIONS["impersonate"] = CHROME_TARGET
 
 # ─────────────────────────────────────────────
 #                 EMBED HELPERS (MODERN UI)
@@ -1303,81 +1297,73 @@ class YTSource(discord.PCMVolumeTransformer):
     @classmethod
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         def run():
-            # Tier 1: Authenticated with fresh Cookies + Chrome TLS Impersonation + VisionOS / Android / Web
+            # Tier 1: Proven 16 October direct engine (Android + Web Embedded, skips webpage HTML download)
             tier1_opts = {
-                "format": "bestaudio/251/18/best/b",
+                "format": "18/bestaudio/best/b",
                 "quiet": True,
                 "no_warnings": True,
                 "nocheckcertificate": True,
-                "socket_timeout": 12,
-                "cookiefile": COOKIE_ARG,
-                "js_runtimes": {"deno": {}, "node": {}},
-                "remote_components": ["ejs:github", "ejs:npm"],
+                "socket_timeout": 10,
+                "retries": 2,
+                "extractor_retries": 2,
+                "cookiefile": None,
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["visionos", "android", "mweb", "web"]
-                    },
-                    "youtubepot-bgutilhttp": {
-                        "base_url": ["http://127.0.0.1:4416"]
+                        "player_client": ["android", "web_embedded"],
+                        "player_skip": ["webpage"]
                     }
                 }
             }
-            if CHROME_TARGET:
-                tier1_opts["impersonate"] = CHROME_TARGET
             try:
                 data = yt_dlp.YoutubeDL(tier1_opts).extract_info(url, download=False)
                 if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
                     return data
             except Exception as e1:
-                print(f"⚠️ Tier 1 (Authenticated Cookies + Chrome) extraction failed: {e1}")
+                print(f"⚠️ Tier 1 (16 Oct Engine) extraction failed: {e1}")
 
-            # Tier 2: VisionOS Direct without cookies
-            tier2_opts = {
+            # Tier 2: Authenticated with Cookies + Chrome TLS Impersonation (for age-gated/member content)
+            if COOKIE_ARG:
+                tier2_opts = {
+                    "format": "bestaudio/251/18/best/b",
+                    "quiet": True,
+                    "no_warnings": True,
+                    "nocheckcertificate": True,
+                    "cookiefile": COOKIE_ARG,
+                    "socket_timeout": 12,
+                    "js_runtimes": {"deno": {}, "node": {}},
+                    "remote_components": ["ejs:github", "ejs:npm"],
+                    "extractor_args": {
+                        "youtube": {
+                            "player_client": ["visionos", "web", "mweb"]
+                        },
+                        "youtubepot-bgutilhttp": {
+                            "base_url": ["http://127.0.0.1:4416"]
+                        }
+                    }
+                }
+                if CHROME_TARGET:
+                    tier2_opts["impersonate"] = CHROME_TARGET
+                try:
+                    data = yt_dlp.YoutubeDL(tier2_opts).extract_info(url, download=False)
+                    if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
+                        return data
+                except Exception as e2:
+                    print(f"⚠️ Tier 2 (Authenticated Cookies) extraction failed: {e2}")
+
+            # Tier 3: VisionOS Direct without cookies
+            tier3_opts = {
                 "format": "bestaudio/251/18/best/b",
                 "quiet": True,
                 "no_warnings": True,
                 "nocheckcertificate": True,
                 "cookiefile": None,
                 "socket_timeout": 12,
-                "js_runtimes": {"deno": {}, "node": {}},
-                "remote_components": ["ejs:github", "ejs:npm"],
                 "extractor_args": {
                     "youtube": {
                         "player_client": ["visionos", "android"]
-                    },
-                    "youtubepot-bgutilhttp": {
-                        "base_url": ["http://127.0.0.1:4416"]
                     }
                 }
             }
-            if CHROME_TARGET:
-                tier2_opts["impersonate"] = CHROME_TARGET
-            try:
-                data = yt_dlp.YoutubeDL(tier2_opts).extract_info(url, download=False)
-                if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
-                    return data
-            except Exception as e2:
-                print(f"⚠️ Tier 2 (VisionOS Unauthenticated) extraction failed: {e2}")
-
-            # Tier 3: POT Provider Web / MWeb
-            tier3_opts = {
-                "format": "bestaudio/18/best/b",
-                "quiet": True,
-                "no_warnings": True,
-                "nocheckcertificate": True,
-                "cookiefile": None,
-                "socket_timeout": 12,
-                "extractor_args": {
-                    "youtube": {
-                        "player_client": ["mweb", "web"]
-                    },
-                    "youtubepot-bgutilhttp": {
-                        "base_url": ["http://127.0.0.1:4416"]
-                    }
-                }
-            }
-            if CHROME_TARGET:
-                tier3_opts["impersonate"] = CHROME_TARGET
             try:
                 return yt_dlp.YoutubeDL(tier3_opts).extract_info(url, download=False)
             except Exception as e3:
