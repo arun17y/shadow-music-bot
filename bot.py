@@ -348,6 +348,14 @@ else:
 try:
     from yt_dlp.networking.impersonate import ImpersonateTarget
     CHROME_TARGET = ImpersonateTarget("chrome")
+    try:
+        from yt_dlp_plugins.extractor import getpot_bgutil_script as _bg_script
+        _bg_script.BgUtilScriptDenoPTP._script_path_provided = lambda self: None
+        _bg_script.BgUtilScriptDenoPTP.is_available = lambda self: False
+        _bg_script.BgUtilScriptNodePTP._script_path_provided = lambda self: None
+        _bg_script.BgUtilScriptNodePTP.is_available = lambda self: False
+    except Exception:
+        pass
     print("🚀 Chrome TLS impersonation target active for direct YouTube extraction.")
 except Exception as _ite:
     CHROME_TARGET = None

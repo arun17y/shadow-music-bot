@@ -24,7 +24,8 @@ WORKDIR /app
 # Install Python requirements
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt && \
+    rm -f /usr/local/lib/python3.11/site-packages/yt_dlp_plugins/extractor/getpot_bgutil_script.py
 
 # Copy application files
 COPY . .
