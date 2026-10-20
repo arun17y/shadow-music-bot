@@ -328,7 +328,7 @@ else:
 
 try:
     from yt_dlp.networking.impersonate import ImpersonateTarget
-    CHROME_TARGET = ImpersonateTarget("chrome")
+    CHROME_TARGET = ImpersonateTarget.from_str("chrome")
     print("🚀 Chrome TLS impersonation target active for direct YouTube extraction.")
 except Exception as _ite:
     CHROME_TARGET = None
@@ -994,13 +994,17 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": COOKIE_ARG,
+    "cookiefile": None,
+    "impersonate": CHROME_TARGET,
     "socket_timeout": 15,
     "retries": 2,
     "extractor_retries": 2,
     "extractor_args": {
         "youtubepot-bgutilhttp": {
             "base_url": ["http://127.0.0.1:4416"]
+        },
+        "youtube": {
+            "player_client": ["visionos", "android", "ios"]
         }
     },
 }
