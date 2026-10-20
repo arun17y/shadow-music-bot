@@ -1021,7 +1021,7 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": COOKIE_ARG,
+    "cookiefile": None,
     "socket_timeout": 12,
     "retries": 2,
     "extractor_retries": 2,
@@ -1298,7 +1298,7 @@ class YTSource(discord.PCMVolumeTransformer):
     @classmethod
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         def run():
-            # Tier 1: Android & TV Clients (Rock-solid playback, bypasses SABR & bot challenges)
+            # Tier 1: POT Provider Daemon (Render Guest Session with fresh PO-Token)
             tier1_opts = {
                 "format": "bestaudio/18/140/251/250/249/b/best",
                 "quiet": True,
@@ -1307,10 +1307,15 @@ class YTSource(discord.PCMVolumeTransformer):
                 "socket_timeout": 12,
                 "retries": 2,
                 "extractor_retries": 2,
-                "cookiefile": COOKIE_ARG,
+                "cookiefile": None,
+                "js_runtimes": {"deno": {}, "node": {}},
+                "remote_components": ["ejs:github", "ejs:npm"],
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["android", "tv"]
+                        "player_client": ["mweb", "web", "web_embedded"]
+                    },
+                    "youtubepot-bgutilhttp": {
+                        "base_url": ["http://127.0.0.1:4416"]
                     }
                 }
             }
@@ -1323,17 +1328,17 @@ class YTSource(discord.PCMVolumeTransformer):
             except Exception as e1:
                 print(f"⚠️ Tier 1 extraction failed: {e1}")
 
-            # Tier 2: TV Embedded & Android Creator (Fallback for format 251/140)
+            # Tier 2: Unauthenticated Android & TV App Clients
             tier2_opts = {
                 "format": "bestaudio/18/140/251/250/249/b/best",
                 "quiet": True,
                 "no_warnings": True,
                 "nocheckcertificate": True,
-                "cookiefile": COOKIE_ARG,
+                "cookiefile": None,
                 "socket_timeout": 12,
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["tv_embedded", "android_creator"]
+                        "player_client": ["android", "tv"]
                     }
                 }
             }
@@ -1346,32 +1351,34 @@ class YTSource(discord.PCMVolumeTransformer):
             except Exception as e2:
                 print(f"⚠️ Tier 2 extraction failed: {e2}")
 
-            # Tier 3: POT Provider + VisionOS/Web/MWeb (PO Token fallback)
-            tier3_opts = {
-                "format": "bestaudio/18/140/251/250/249/b/best",
-                "quiet": True,
-                "no_warnings": True,
-                "nocheckcertificate": True,
-                "cookiefile": COOKIE_ARG,
-                "socket_timeout": 12,
-                "js_runtimes": {"deno": {}, "node": {}},
-                "remote_components": ["ejs:github", "ejs:npm"],
-                "extractor_args": {
-                    "youtube": {
-                        "player_client": ["visionos", "web", "mweb"]
-                    },
-                    "youtubepot-bgutilhttp": {
-                        "base_url": ["http://127.0.0.1:4416"]
+            # Tier 3: Authenticated Cookies Fallback (if user cookies valid)
+            if COOKIE_ARG:
+                tier3_opts = {
+                    "format": "bestaudio/18/140/251/250/249/b/best",
+                    "quiet": True,
+                    "no_warnings": True,
+                    "nocheckcertificate": True,
+                    "cookiefile": COOKIE_ARG,
+                    "socket_timeout": 12,
+                    "js_runtimes": {"deno": {}, "node": {}},
+                    "remote_components": ["ejs:github", "ejs:npm"],
+                    "extractor_args": {
+                        "youtube": {
+                            "player_client": ["visionos", "web", "mweb"]
+                        },
+                        "youtubepot-bgutilhttp": {
+                            "base_url": ["http://127.0.0.1:4416"]
+                        }
                     }
                 }
-            }
-            if CHROME_TARGET:
-                tier3_opts["impersonate"] = CHROME_TARGET
-            try:
-                return yt_dlp.YoutubeDL(tier3_opts).extract_info(url, download=False)
-            except Exception as e3:
-                print(f"❌ All stream extraction tiers failed: {e3}")
-                raise e3
+                if CHROME_TARGET:
+                    tier3_opts["impersonate"] = CHROME_TARGET
+                try:
+                    return yt_dlp.YoutubeDL(tier3_opts).extract_info(url, download=False)
+                except Exception as e3:
+                    print(f"⚠️ Tier 3 extraction failed: {e3}")
+
+            raise RuntimeError("All extraction tiers exhausted for URL: " + url)
 
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
@@ -2090,6 +2097,46 @@ class MusicBot(commands.Bot):
                         "traceback": traceback.format_exc()
                     }, status=500)
 
+            async def test_opts_view(request):
+                url = request.query.get("url") or "https://www.youtube.com/watch?v=DLlXI1-_o7Y"
+                client = request.query.get("client") or "mweb,web"
+                use_cookies = request.query.get("cookies", "0") == "1"
+                use_pot = request.query.get("pot", "1") == "1"
+                opts = {
+                    "format": "bestaudio/18/140/251/250/249/b/best",
+                    "quiet": True,
+                    "no_warnings": True,
+                    "nocheckcertificate": True,
+                    "cookiefile": COOKIE_ARG if use_cookies else None,
+                    "js_runtimes": {"deno": {}, "node": {}},
+                    "remote_components": ["ejs:github", "ejs:npm"],
+                    "extractor_args": {
+                        "youtube": {
+                            "player_client": [c.strip() for c in client.split(",")]
+                        }
+                    }
+                }
+                if use_pot:
+                    opts["extractor_args"]["youtubepot-bgutilhttp"] = {
+                        "base_url": ["http://127.0.0.1:4416"]
+                    }
+                if CHROME_TARGET:
+                    opts["impersonate"] = CHROME_TARGET
+                try:
+                    def _ex():
+                        return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
+                    d = await asyncio.get_event_loop().run_in_executor(None, _ex)
+                    stream_url = d.get("url")
+                    return web.json_response({
+                        "status": "ok",
+                        "title": d.get("title"),
+                        "format_id": d.get("format_id"),
+                        "has_url": bool(stream_url),
+                        "stream_domain": stream_url.split("/")[2] if stream_url else None
+                    })
+                except Exception as ex:
+                    return web.json_response({"status": "error", "error": str(ex)}, status=500)
+
             async def test_stream_view(request):
                 url = request.query.get("url") or request.query.get("q") or "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
                 try:
@@ -2638,6 +2685,7 @@ class MusicBot(commands.Bot):
             app.router.add_get("/api/logs", logs_view)
             app.router.add_get("/api/test_extract", test_extract_view)
             app.router.add_get("/api/test_stream", test_stream_view)
+            app.router.add_get("/api/test_opts", test_opts_view)
             app.router.add_get("/api/formats", formats_view)
             app.router.add_get("/api/test_pcm", test_pcm_view)
             app.router.add_get("/api/diagnose", diagnose_view)
