@@ -1002,13 +1002,14 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": COOKIE_ARG,
+    "cookiefile": None,
     "socket_timeout": 15,
     "retries": 2,
     "extractor_retries": 2,
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "ios", "web"]
+            "player_client": ["android", "ios"],
+            "player_skip": ["webpage"]
         }
     },
 }
@@ -1275,13 +1276,13 @@ class YTSource(discord.PCMVolumeTransformer):
             try:
                 return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
             except Exception as e:
-                print(f"⚠️ Primary extract failed ({e}). Attempting fallback...")
+                print(f"⚠️ Primary Android/iOS extract failed ({e}). Attempting fallback...")
                 try:
                     fallback_opts = opts.copy()
-                    fallback_opts["cookiefile"] = None if opts.get("cookiefile") else COOKIE_ARG
                     fallback_opts["extractor_args"] = {
                         "youtube": {
-                            "player_client": ["android", "ios"]
+                            "player_client": ["ios", "android"],
+                            "player_skip": ["webpage"]
                         }
                     }
                     return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
