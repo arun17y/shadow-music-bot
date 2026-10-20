@@ -1027,7 +1027,7 @@ YTDL_OPTIONS = {
     "extractor_retries": 2,
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "web_embedded", "visionos"]
+            "player_client": ["android", "tv"]
         }
     },
 }
@@ -1298,7 +1298,7 @@ class YTSource(discord.PCMVolumeTransformer):
     @classmethod
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         def run():
-            # Tier 1: Authenticated with Cookies + Chrome TLS + POT Provider
+            # Tier 1: Android & TV Clients (Rock-solid playback, bypasses SABR & bot challenges)
             tier1_opts = {
                 "format": "bestaudio/18/140/251/250/249/b/best",
                 "quiet": True,
@@ -1308,14 +1308,9 @@ class YTSource(discord.PCMVolumeTransformer):
                 "retries": 2,
                 "extractor_retries": 2,
                 "cookiefile": COOKIE_ARG,
-                "js_runtimes": {"deno": {}, "node": {}},
-                "remote_components": ["ejs:github", "ejs:npm"],
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["visionos", "web", "mweb"]
-                    },
-                    "youtubepot-bgutilhttp": {
-                        "base_url": ["http://127.0.0.1:4416"]
+                        "player_client": ["android", "tv"]
                     }
                 }
             }
@@ -1328,7 +1323,7 @@ class YTSource(discord.PCMVolumeTransformer):
             except Exception as e1:
                 print(f"⚠️ Tier 1 extraction failed: {e1}")
 
-            # Tier 2: Android / Web_Embedded + Cookies + POT Provider
+            # Tier 2: TV Embedded & Android Creator (Fallback for format 251/140)
             tier2_opts = {
                 "format": "bestaudio/18/140/251/250/249/b/best",
                 "quiet": True,
@@ -1338,10 +1333,7 @@ class YTSource(discord.PCMVolumeTransformer):
                 "socket_timeout": 12,
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["android", "web_embedded"]
-                    },
-                    "youtubepot-bgutilhttp": {
-                        "base_url": ["http://127.0.0.1:4416"]
+                        "player_client": ["tv_embedded", "android_creator"]
                     }
                 }
             }
@@ -1354,17 +1346,22 @@ class YTSource(discord.PCMVolumeTransformer):
             except Exception as e2:
                 print(f"⚠️ Tier 2 extraction failed: {e2}")
 
-            # Tier 3: Unauthenticated TV / iOS / Embedded fallback
+            # Tier 3: POT Provider + VisionOS/Web/MWeb (PO Token fallback)
             tier3_opts = {
                 "format": "bestaudio/18/140/251/250/249/b/best",
                 "quiet": True,
                 "no_warnings": True,
                 "nocheckcertificate": True,
-                "cookiefile": None,
+                "cookiefile": COOKIE_ARG,
                 "socket_timeout": 12,
+                "js_runtimes": {"deno": {}, "node": {}},
+                "remote_components": ["ejs:github", "ejs:npm"],
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["tv_embedded", "ios", "mweb"]
+                        "player_client": ["visionos", "web", "mweb"]
+                    },
+                    "youtubepot-bgutilhttp": {
+                        "base_url": ["http://127.0.0.1:4416"]
                     }
                 }
             }
