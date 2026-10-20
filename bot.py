@@ -995,7 +995,7 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "18/bestaudio/best/b",
+    "format": "bestaudio/18/best",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
@@ -1007,8 +1007,8 @@ YTDL_OPTIONS = {
     "retries": 2,
     "extractor_retries": 2,
     "extractor_args": {
-        "youtubepot-bgutilhttp": {
-            "base_url": ["http://127.0.0.1:4416"]
+        "youtube": {
+            "player_client": ["tv_embedded", "android_music", "android", "ios"]
         }
     },
 }
@@ -1268,20 +1268,19 @@ class YTSource(discord.PCMVolumeTransformer):
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = False
-        opts["format"] = "18/bestaudio/best/b"
+        opts["format"] = "bestaudio/18/best"
         opts["socket_timeout"] = 15
 
         def run():
             try:
                 return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
             except Exception as e:
-                print(f"⚠️ Primary PO Token extract failed ({e}). Attempting Android/iOS fallback...")
+                print(f"⚠️ Primary extract failed ({e}). Attempting Android fallback...")
                 try:
                     fallback_opts = opts.copy()
                     fallback_opts["extractor_args"] = {
                         "youtube": {
-                            "player_client": ["android", "ios"],
-                            "player_skip": ["webpage"]
+                            "player_client": ["android", "ios"]
                         }
                     }
                     return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
@@ -1298,15 +1297,10 @@ class YTSource(discord.PCMVolumeTransformer):
             raise Exception("No stream URL extracted!")
             
         headers = data.get("http_headers", {})
-        if "c=ANDROID_VR" in stream_url:
-            ua = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
-        elif "c=ANDROID" in stream_url:
-            ua = "com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip"
-        else:
-            ua = headers.get("User-Agent") or headers.get("user-agent") or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ua = headers.get("User-Agent") or headers.get("user-agent") or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         
         ffmpeg_opts = get_ffmpeg_options(active_filter, speed, pitch)
-        ffmpeg_opts["before_options"] += f' -user_agent "{ua}" -headers "Referer: https://www.youtube.com/"'
+        ffmpeg_opts["before_options"] += f' -user_agent "{ua}"'
         
         if seek_time > 0:
             ffmpeg_opts["before_options"] += f" -ss {seek_time}"
