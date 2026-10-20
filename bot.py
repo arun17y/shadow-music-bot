@@ -1131,6 +1131,8 @@ class YTSource(discord.PCMVolumeTransformer):
                 if is_search:
                     print(f"⚠️ Search failed on YouTube ({e}). Falling back to SoundCloud...")
                     sc_opts = opts.copy()
+                    sc_opts["extract_flat"] = True
+                    sc_opts["ignoreerrors"] = True
                     return yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{query}", download=False)
                 raise e
 
@@ -1211,6 +1213,8 @@ class YTSource(discord.PCMVolumeTransformer):
                                 if d.get("author_name"):
                                     o_title += " " + d.get("author_name")
                                 sc_opts = opts.copy()
+                                sc_opts["extract_flat"] = True
+                                sc_opts["ignoreerrors"] = True
                                 return yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{o_title}", download=False)
                         except Exception:
                             pass
@@ -1330,7 +1334,7 @@ class YTSource(discord.PCMVolumeTransformer):
                     sc_opts = {
                         "format": "bestaudio/best",
                         "quiet": True,
-                        "extract_flat": "in_playlist",
+                        "extract_flat": True,
                         "ignoreerrors": True,
                         "socket_timeout": 10
                     }
