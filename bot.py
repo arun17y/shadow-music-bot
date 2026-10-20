@@ -1006,7 +1006,7 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "bestaudio/18/b/best",
+    "format": "bestaudio/18/best/b",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
@@ -1014,15 +1014,13 @@ YTDL_OPTIONS = {
     "no_warnings": True,
     "default_search": "ytsearch",
     "cookiefile": None,
-    "socket_timeout": 12,
-    "retries": 2,
-    "extractor_retries": 2,
+    "socket_timeout": 10,
+    "retries": 1,
+    "extractor_retries": 1,
     "extractor_args": {
-        "youtubepot-bgutilhttp": {
-            "base_url": ["http://127.0.0.1:4416"]
-        },
         "youtube": {
-            "player_client": ["visionos", "android_vr", "android", "web", "mweb"]
+            "player_client": ["android", "web_embedded"],
+            "player_skip": ["webpage"]
         }
     },
 }
@@ -1282,57 +1280,27 @@ class YTSource(discord.PCMVolumeTransformer):
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = False
-        opts["format"] = "bestaudio/18/b/best"
-        opts["socket_timeout"] = 12
+        opts["format"] = "18/bestaudio/best/b"
+        opts["cookiefile"] = None
+        opts["socket_timeout"] = 10
 
         def run():
-            # Tier 1: Apple VisionOS native client (Zero bot blocks, direct Google Video audio)
-            opts_vision = opts.copy()
-            opts_vision["extractor_args"] = {
-                "youtube": {
-                    "player_client": ["visionos"]
-                }
-            }
             try:
-                res = yt_dlp.YoutubeDL(opts_vision).extract_info(url, download=False)
-                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                    print(f"✅ Tier 1 (VisionOS) direct YouTube stream extracted successfully!")
-                    return res
-            except Exception as e_v:
-                print(f"⚠️ Tier 1 (VisionOS) failed ({e_v}). Trying Tier 2 (Android VR / Android)...")
-
-            # Tier 2: Android VR / Android client
-            opts_avr = opts.copy()
-            opts_avr["extractor_args"] = {
-                "youtube": {
-                    "player_client": ["android_vr", "android"]
-                }
-            }
-            try:
-                res = yt_dlp.YoutubeDL(opts_avr).extract_info(url, download=False)
-                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
-                    print(f"✅ Tier 2 (Android VR) direct YouTube stream extracted successfully!")
-                    return res
-            except Exception as e_avr:
-                print(f"⚠️ Tier 2 (Android VR) failed ({e_avr}). Trying Tier 3 (PO Token Web)...")
-
-            # Tier 3: Web / MWeb client with bgutil-pot PO Token
-            opts_pot = opts.copy()
-            opts_pot["extractor_args"] = {
-                "youtubepot-bgutilhttp": {
-                    "base_url": ["http://127.0.0.1:4416"]
-                },
-                "youtube": {
-                    "player_client": ["web", "mweb"]
-                }
-            }
-            try:
-                res = yt_dlp.YoutubeDL(opts_pot).extract_info(url, download=False)
-                print(f"✅ Tier 3 (PO Token Web) direct YouTube stream extracted successfully!")
-                return res
-            except Exception as e_pot:
-                print(f"❌ Tier 3 (PO Token Web) failed ({e_pot})")
-                raise e_pot
+                return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
+            except Exception as e:
+                print(f"⚠️ Primary YouTube extract failed ({e}). Attempting fallback...")
+                try:
+                    fallback_opts = opts.copy()
+                    fallback_opts["extractor_args"] = {
+                        "youtube": {
+                            "player_client": ["android", "tv"],
+                            "player_skip": ["webpage"]
+                        }
+                    }
+                    return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
+                except Exception as fb_err:
+                    print(f"❌ YouTube fallback failed ({fb_err})")
+                    raise e
 
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
