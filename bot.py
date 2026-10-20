@@ -1295,7 +1295,7 @@ class YTSource(discord.PCMVolumeTransformer):
     @classmethod
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         def run():
-            # Tier 1: Android Direct Bypass (Instantaneous, immune to datacenter bot check, skips webpage HTML)
+            # Tier 1: Android Direct Bypass (Immune to datacenter bot check, no cookie requirement)
             tier1_opts = {
                 "format": "18/bestaudio/best",
                 "quiet": True,
@@ -1305,8 +1305,7 @@ class YTSource(discord.PCMVolumeTransformer):
                 "cookiefile": None,
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["android", "android_vr"],
-                        "player_skip": ["webpage"]
+                        "player_client": ["android", "android_vr"]
                     }
                 }
             }
@@ -1346,7 +1345,7 @@ class YTSource(discord.PCMVolumeTransformer):
                 except Exception as e2:
                     print(f"⚠️ Tier 2 (Authenticated Cookies) extraction failed: {e2}")
 
-            # Tier 3: VisionOS / iOS Mobile Innertube
+            # Tier 3: Web / Mobile Direct Innertube
             tier3_opts = {
                 "format": "18/bestaudio/best/b",
                 "quiet": True,
@@ -1356,8 +1355,7 @@ class YTSource(discord.PCMVolumeTransformer):
                 "socket_timeout": 12,
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["visionos", "ios", "mweb"],
-                        "player_skip": ["webpage"]
+                        "player_client": ["android", "mweb", "web"]
                     },
                     "youtubepot-bgutilhttp": {
                         "base_url": ["http://127.0.0.1:4416"]
