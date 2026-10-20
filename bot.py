@@ -1303,9 +1303,9 @@ class YTSource(discord.PCMVolumeTransformer):
     @classmethod
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         def run():
-            # Tier 1: POT Provider + Chrome TLS + Cookies
+            # Tier 1: Authenticated with fresh Cookies + Chrome TLS Impersonation + VisionOS / Android / Web
             tier1_opts = {
-                "format": "bestaudio/18/best/b",
+                "format": "bestaudio/251/18/best/b",
                 "quiet": True,
                 "no_warnings": True,
                 "nocheckcertificate": True,
@@ -1315,7 +1315,7 @@ class YTSource(discord.PCMVolumeTransformer):
                 "remote_components": ["ejs:github", "ejs:npm"],
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["web", "mweb"]
+                        "player_client": ["visionos", "android", "mweb", "web"]
                     },
                     "youtubepot-bgutilhttp": {
                         "base_url": ["http://127.0.0.1:4416"]
@@ -1329,11 +1329,11 @@ class YTSource(discord.PCMVolumeTransformer):
                 if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
                     return data
             except Exception as e1:
-                print(f"⚠️ Tier 1 (POT + Web) extraction failed: {e1}")
+                print(f"⚠️ Tier 1 (Authenticated Cookies + Chrome) extraction failed: {e1}")
 
-            # Tier 2: POT Provider without cookies
+            # Tier 2: VisionOS Direct without cookies
             tier2_opts = {
-                "format": "bestaudio/18/best/b",
+                "format": "bestaudio/251/18/best/b",
                 "quiet": True,
                 "no_warnings": True,
                 "nocheckcertificate": True,
@@ -1343,7 +1343,7 @@ class YTSource(discord.PCMVolumeTransformer):
                 "remote_components": ["ejs:github", "ejs:npm"],
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["web", "mweb"]
+                        "player_client": ["visionos", "android"]
                     },
                     "youtubepot-bgutilhttp": {
                         "base_url": ["http://127.0.0.1:4416"]
@@ -1357,11 +1357,11 @@ class YTSource(discord.PCMVolumeTransformer):
                 if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
                     return data
             except Exception as e2:
-                print(f"⚠️ Tier 2 (POT unauthenticated) extraction failed: {e2}")
+                print(f"⚠️ Tier 2 (VisionOS Unauthenticated) extraction failed: {e2}")
 
-            # Tier 3: Android Direct Innertube
+            # Tier 3: POT Provider Web / MWeb
             tier3_opts = {
-                "format": "18/bestaudio/best",
+                "format": "bestaudio/18/best/b",
                 "quiet": True,
                 "no_warnings": True,
                 "nocheckcertificate": True,
@@ -1369,10 +1369,15 @@ class YTSource(discord.PCMVolumeTransformer):
                 "socket_timeout": 12,
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["android", "android_vr"]
+                        "player_client": ["mweb", "web"]
+                    },
+                    "youtubepot-bgutilhttp": {
+                        "base_url": ["http://127.0.0.1:4416"]
                     }
                 }
             }
+            if CHROME_TARGET:
+                tier3_opts["impersonate"] = CHROME_TARGET
             try:
                 return yt_dlp.YoutubeDL(tier3_opts).extract_info(url, download=False)
             except Exception as e3:
