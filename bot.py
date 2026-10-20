@@ -304,35 +304,27 @@ if not BOT_TOKEN:
 COOKIE_ARG = None
 if os.path.exists(COOKIES_FILE):
     try:
-        # Sanitize cookie file format so http.cookiejar never crashes on malformed lines
         with open(COOKIES_FILE, "r", encoding="utf-8", errors="ignore") as _cf:
             _raw_lines = _cf.readlines()
-        _clean_lines = ["# Netscape HTTP Cookie File\n# Cleaned by Shadow Cheats Music\n"]
         has_yt_login = False
         for _l in _raw_lines:
             _ls = _l.strip()
             if not _ls or _ls.startswith("#"):
                 continue
             _parts = _ls.split("\t")
-            if len(_parts) >= 7:
-                if _parts[0].startswith("."):
-                    _parts[1] = "TRUE"
-                _clean_lines.append("\t".join(_parts) + "\n")
-                if any(k in _parts[5] for k in ["LOGIN_INFO", "__Secure-3PSID", "__Secure-1PSID", "SID"]):
-                    has_yt_login = True
-        with open(COOKIES_FILE, "w", encoding="utf-8") as _cf:
-            _cf.writelines(_clean_lines)
+            if len(_parts) >= 7 and any(k in _parts[5] for k in ["LOGIN_INFO", "__Secure-3PSID", "__Secure-1PSID"]):
+                has_yt_login = True
         if has_yt_login:
             COOKIE_ARG = COOKIES_FILE
             print(f"✅ Loaded verified YouTube account cookies from {COOKIES_FILE}")
         else:
             COOKIE_ARG = None
-            print(f"ℹ️ {COOKIES_FILE} does not contain authenticated YouTube session cookies. Using Chrome TLS impersonation.")
+            print(f"ℹ️ {COOKIES_FILE} is clean. Using direct mobile InnerTube clients.")
     except Exception as _ce:
-        print(f"⚠️ Error sanitizing {COOKIES_FILE}: {_ce}")
         COOKIE_ARG = None
+        print(f"⚠️ Error reading {COOKIES_FILE}: {_ce}")
 else:
-    print(f"ℹ️ {COOKIES_FILE} not found. YouTube streaming will use Chrome TLS impersonation.")
+    print(f"ℹ️ {COOKIES_FILE} not found. Using direct mobile InnerTube clients.")
 
 try:
     from yt_dlp.networking.impersonate import ImpersonateTarget
