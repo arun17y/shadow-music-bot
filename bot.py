@@ -1006,13 +1006,9 @@ YTDL_OPTIONS = {
     "socket_timeout": 15,
     "retries": 2,
     "extractor_retries": 2,
-    "extractor_args": {
-        "youtube": {
-            "player_client": ["android", "ios"],
-            "player_skip": ["webpage"]
-        }
-    },
 }
+if CHROME_TARGET:
+    YTDL_OPTIONS["impersonate"] = CHROME_TARGET
 
 # ─────────────────────────────────────────────
 #                 EMBED HELPERS (MODERN UI)
@@ -1271,18 +1267,19 @@ class YTSource(discord.PCMVolumeTransformer):
         opts["extract_flat"] = False
         opts["format"] = "18/bestaudio/best/b"
         opts["socket_timeout"] = 15
+        if CHROME_TARGET:
+            opts["impersonate"] = CHROME_TARGET
 
         def run():
             try:
                 return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
             except Exception as e:
-                print(f"⚠️ Primary Android/iOS extract failed ({e}). Attempting fallback...")
+                print(f"⚠️ Primary Chrome TLS extract failed ({e}). Attempting Android/iOS fallback...")
                 try:
                     fallback_opts = opts.copy()
                     fallback_opts["extractor_args"] = {
                         "youtube": {
-                            "player_client": ["ios", "android"],
-                            "player_skip": ["webpage"]
+                            "player_client": ["android", "ios"]
                         }
                     }
                     return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
