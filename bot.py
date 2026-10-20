@@ -1006,21 +1006,23 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "bestaudio/18/best/b",
+    "format": "bestaudio/18/b/best",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": None,
-    "socket_timeout": 10,
-    "retries": 1,
-    "extractor_retries": 1,
+    "cookiefile": COOKIE_ARG,
+    "socket_timeout": 12,
+    "retries": 2,
+    "extractor_retries": 2,
     "extractor_args": {
+        "youtubepot-bgutilhttp": {
+            "base_url": ["http://127.0.0.1:4416"]
+        },
         "youtube": {
-            "player_client": ["android", "web_embedded"],
-            "player_skip": ["webpage"]
+            "player_client": ["web", "mweb", "android_vr", "android", "visionos"]
         }
     },
 }
@@ -1280,27 +1282,46 @@ class YTSource(discord.PCMVolumeTransformer):
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         opts = YTDL_OPTIONS.copy()
         opts["extract_flat"] = False
-        opts["format"] = "18/bestaudio/best/b"
-        opts["cookiefile"] = None
-        opts["socket_timeout"] = 10
+        opts["format"] = "bestaudio/18/b/best"
+        opts["cookiefile"] = COOKIE_ARG
+        opts["socket_timeout"] = 12
 
         def run():
+            # Tier 1: Primary extraction with new cookies + PO Token
             try:
-                return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
+                res = yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
+                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                    print(f"✅ Primary extract with cookies succeeded!")
+                    return res
             except Exception as e:
-                print(f"⚠️ Primary YouTube extract failed ({e}). Attempting fallback...")
-                try:
-                    fallback_opts = opts.copy()
-                    fallback_opts["extractor_args"] = {
-                        "youtube": {
-                            "player_client": ["android", "tv"],
-                            "player_skip": ["webpage"]
-                        }
+                print(f"⚠️ Primary extract failed ({e}). Attempting multi-client fallback without cookies...")
+
+            # Tier 2: VisionOS / Android VR without cookies
+            try:
+                fb_opts = opts.copy()
+                fb_opts["cookiefile"] = None
+                fb_opts["extractor_args"] = {
+                    "youtube": {
+                        "player_client": ["visionos", "android_vr"]
                     }
-                    return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
-                except Exception as fb_err:
-                    print(f"❌ YouTube fallback failed ({fb_err})")
-                    raise e
+                }
+                res = yt_dlp.YoutubeDL(fb_opts).extract_info(url, download=False)
+                if res and (res.get("url") or (res.get("entries") and res["entries"][0].get("url"))):
+                    print(f"✅ Fallback (VisionOS / Android VR) succeeded!")
+                    return res
+            except Exception as e_fb:
+                print(f"⚠️ Fallback Tier 2 failed ({e_fb}). Attempting Android format 18 fallback...")
+
+            # Tier 3: Android format 18
+            fb_android = opts.copy()
+            fb_android["format"] = "18"
+            fb_android["cookiefile"] = None
+            fb_android["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["android"]
+                }
+            }
+            return yt_dlp.YoutubeDL(fb_android).extract_info(url, download=False)
 
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
