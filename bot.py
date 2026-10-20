@@ -1028,6 +1028,8 @@ YTDL_OPTIONS = {
         }
     },
 }
+if CHROME_TARGET:
+    YTDL_OPTIONS["impersonate"] = CHROME_TARGET
 
 # ─────────────────────────────────────────────
 #                 EMBED HELPERS (MODERN UI)
@@ -1167,6 +1169,16 @@ class YTSource(discord.PCMVolumeTransformer):
                 if not any(k in q_lower for k in ad_keywords):
                     if any(k in title for k in ad_keywords):
                         continue
+                # Filter out 1 hour / loop / extended unless explicitly requested
+                if not any(k in q_lower for k in ["1 hour", "1hr", "10 hour", "loop", "extended"]):
+                    if any(k in title for k in ["1 hour", "10 hour", "10 hrs", "1 hr loop", "[1 hour]"]):
+                        continue
+                if "slowed" not in q_lower and ("slowed" in title or "reverb" in title):
+                    continue
+                if "sped" not in q_lower and "speed" not in q_lower and ("sped up" in title or "speed up" in title):
+                    continue
+                if "edit" not in q_lower and ("[edit" in title or "(edit" in title or "edit audio" in title):
+                    continue
                 selected = e
                 break
             if not selected:
@@ -1282,32 +1294,83 @@ class YTSource(discord.PCMVolumeTransformer):
 
     @classmethod
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
-        opts = YTDL_OPTIONS.copy()
-        opts["extract_flat"] = False
-        opts["format"] = "18/bestaudio/best/b"
-        opts["cookiefile"] = COOKIE_ARG
-        opts["socket_timeout"] = 10
-
         def run():
+            # Tier 1: Android Direct Bypass (Instantaneous, immune to datacenter bot check, skips webpage HTML)
+            tier1_opts = {
+                "format": "18/bestaudio/best",
+                "quiet": True,
+                "no_warnings": True,
+                "nocheckcertificate": True,
+                "socket_timeout": 10,
+                "cookiefile": None,
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["android"],
+                        "player_skip": ["webpage", "configs"]
+                    }
+                }
+            }
             try:
-                return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
-            except Exception as e:
-                print(f"⚠️ Primary YouTube extract failed ({e}). Attempting Android VR fallback without cookies...")
-                try:
-                    fallback_opts = opts.copy()
-                    fallback_opts["cookiefile"] = None
-                    fallback_opts["extractor_args"] = {
+                data = yt_dlp.YoutubeDL(tier1_opts).extract_info(url, download=False)
+                if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
+                    return data
+            except Exception as e1:
+                print(f"⚠️ Tier 1 (Android Direct) extraction failed: {e1}")
+
+            # Tier 2: Authenticated with Cookies + Chrome TLS Impersonation + POT Provider
+            if COOKIE_ARG:
+                tier2_opts = {
+                    "format": "18/bestaudio/best/b",
+                    "quiet": True,
+                    "no_warnings": True,
+                    "nocheckcertificate": True,
+                    "cookiefile": COOKIE_ARG,
+                    "socket_timeout": 12,
+                    "js_runtimes": {"deno": {}, "node": {}},
+                    "remote_components": ["ejs:github", "ejs:npm"],
+                    "extractor_args": {
                         "youtube": {
-                            "player_client": ["android_vr", "android"]
+                            "player_client": ["web", "mweb"]
                         },
                         "youtubepot-bgutilhttp": {
                             "base_url": ["http://127.0.0.1:4416"]
                         }
                     }
-                    return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
-                except Exception as fb_err:
-                    print(f"❌ YouTube fallback failed ({fb_err})")
-                    raise e
+                }
+                if CHROME_TARGET:
+                    tier2_opts["impersonate"] = CHROME_TARGET
+                try:
+                    data = yt_dlp.YoutubeDL(tier2_opts).extract_info(url, download=False)
+                    if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
+                        return data
+                except Exception as e2:
+                    print(f"⚠️ Tier 2 (Authenticated Cookies) extraction failed: {e2}")
+
+            # Tier 3: VisionOS / iOS Mobile Innertube
+            tier3_opts = {
+                "format": "18/bestaudio/best/b",
+                "quiet": True,
+                "no_warnings": True,
+                "nocheckcertificate": True,
+                "cookiefile": None,
+                "socket_timeout": 12,
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["visionos", "ios", "mweb"],
+                        "player_skip": ["webpage"]
+                    },
+                    "youtubepot-bgutilhttp": {
+                        "base_url": ["http://127.0.0.1:4416"]
+                    }
+                }
+            }
+            if CHROME_TARGET:
+                tier3_opts["impersonate"] = CHROME_TARGET
+            try:
+                return yt_dlp.YoutubeDL(tier3_opts).extract_info(url, download=False)
+            except Exception as e3:
+                print(f"❌ All stream extraction tiers failed: {e3}")
+                raise e3
 
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
