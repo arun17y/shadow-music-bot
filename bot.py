@@ -1305,8 +1305,8 @@ class YTSource(discord.PCMVolumeTransformer):
                 "cookiefile": None,
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["android"],
-                        "player_skip": ["webpage", "configs"]
+                        "player_client": ["android", "android_vr"],
+                        "player_skip": ["webpage"]
                     }
                 }
             }
