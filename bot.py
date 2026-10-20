@@ -1328,8 +1328,15 @@ class YTSource(discord.PCMVolumeTransformer):
                                     stitle += " " + d.get("author_name")
                         except Exception:
                             pass
-                    if not stitle:
-                        stitle = url
+                    if stitle:
+                        import re
+                        clean_title = re.sub(r' - Topic|\(From [^\)]+\)|\[[^\]]+\]|\(Official [^\)]+\)|Official Video|Audio', '', stitle, flags=re.IGNORECASE).strip()
+                        candidates = [clean_title]
+                        base_title = clean_title.split(' - ')[0].split('  ')[0].strip()
+                        if base_title and base_title not in candidates:
+                            candidates.append(base_title)
+                    else:
+                        candidates = [url]
                     
                     sc_opts = {
                         "format": "bestaudio/best",
@@ -1339,20 +1346,21 @@ class YTSource(discord.PCMVolumeTransformer):
                         "socket_timeout": 10
                     }
                     try:
-                        sc_search = yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{stitle}", download=False)
-                        entries = sc_search.get("entries", []) if sc_search else []
-                        for entry in entries:
-                            if not entry: continue
-                            track_url = entry.get("url") or entry.get("webpage_url")
-                            if not track_url: continue
-                            try:
-                                play_opts = {"format": "bestaudio/best", "quiet": True, "socket_timeout": 10}
-                                play_data = yt_dlp.YoutubeDL(play_opts).extract_info(track_url, download=False)
-                                if play_data and play_data.get("url"):
-                                    print(f"✅ Successfully routed track to audio stream: {play_data.get('title')}")
-                                    return play_data
-                            except Exception:
-                                continue
+                        for q in candidates:
+                            sc_search = yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{q}", download=False)
+                            entries = sc_search.get("entries", []) if sc_search else []
+                            for entry in entries:
+                                if not entry: continue
+                                track_url = entry.get("url") or entry.get("webpage_url")
+                                if not track_url: continue
+                                try:
+                                    play_opts = {"format": "bestaudio/best", "quiet": True, "socket_timeout": 10}
+                                    play_data = yt_dlp.YoutubeDL(play_opts).extract_info(track_url, download=False)
+                                    if play_data and play_data.get("url"):
+                                        print(f"✅ Successfully routed track to audio stream: {play_data.get('title')}")
+                                        return play_data
+                                except Exception:
+                                    continue
                     except Exception as sc_err:
                         print(f"❌ SoundCloud mirror search failed: {sc_err}")
                     raise e
