@@ -1014,7 +1014,7 @@ def get_ffmpeg_options(filter_name: Optional[str] = None, speed: float = 1.0, pi
     }
 
 YTDL_OPTIONS = {
-    "format": "bestaudio/251/18/best/b",
+    "format": "bestaudio/18/140/251/250/249/b/best",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
@@ -1300,7 +1300,7 @@ class YTSource(discord.PCMVolumeTransformer):
         def run():
             # Tier 1: Chrome TLS Impersonation + OAuth2 + Android/Web_Embedded/VisionOS (No cookies needed)
             tier1_opts = {
-                "format": "bestaudio/251/18/best/b",
+                "format": "bestaudio/18/140/251/250/249/b/best",
                 "quiet": True,
                 "no_warnings": True,
                 "nocheckcertificate": True,
@@ -1326,7 +1326,7 @@ class YTSource(discord.PCMVolumeTransformer):
             # Tier 2: Authenticated with Cookies + Chrome TLS (for age-gated/member content)
             if COOKIE_ARG:
                 tier2_opts = {
-                    "format": "bestaudio/251/18/best/b",
+                    "format": "bestaudio/18/140/251/250/249/b/best",
                     "quiet": True,
                     "no_warnings": True,
                     "nocheckcertificate": True,
@@ -1354,7 +1354,7 @@ class YTSource(discord.PCMVolumeTransformer):
 
             # Tier 3: POT Provider fallback
             tier3_opts = {
-                "format": "bestaudio/18/best/b",
+                "format": "bestaudio/18/140/251/250/249/b/best",
                 "quiet": True,
                 "no_warnings": True,
                 "nocheckcertificate": True,
