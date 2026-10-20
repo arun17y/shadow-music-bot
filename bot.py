@@ -219,13 +219,13 @@ sys.stderr = OutputTee(sys.stderr)
 #             DEPENDENCY AUTO-INSTALLER
 # ─────────────────────────────────────────────
 
-REQUIRED = ["discord.py>=2.3.0", "yt-dlp", "PyNaCl", "aiohttp", "psutil", "davey"]
+REQUIRED = ["discord.py>=2.3.0", "yt-dlp", "PyNaCl", "aiohttp", "psutil", "davey", "bgutil-ytdlp-pot-provider"]
 
 def auto_install():
     missing = []
     for pkg in REQUIRED:
         name = pkg.split(">=")[0]
-        import_name = {"discord.py": "discord", "PyNaCl": "nacl"}.get(name, name.replace("-", "_"))
+        import_name = {"discord.py": "discord", "PyNaCl": "nacl", "bgutil-ytdlp-pot-provider": "yt_dlp_plugins"}.get(name, name.replace("-", "_"))
         try:
             importlib.import_module(import_name)
         except ImportError:
@@ -315,8 +315,6 @@ if os.path.exists(COOKIES_FILE):
                 continue
             _parts = _ls.split("\t")
             if len(_parts) >= 7:
-                if not _parts[0].endswith("youtube.com"):
-                    continue
                 if _parts[0].startswith("."):
                     _parts[1] = "TRUE"
                 _clean_lines.append("\t".join(_parts) + "\n")
@@ -336,43 +334,6 @@ if os.path.exists(COOKIES_FILE):
 else:
     print(f"ℹ️ {COOKIES_FILE} not found. YouTube streaming will use Chrome TLS impersonation.")
 
-def reload_youtube_cookies(content: str) -> dict:
-    global COOKIE_ARG, YTDL_OPTIONS
-    try:
-        lines = content.strip().splitlines()
-        clean = ["# Netscape HTTP Cookie File\n# Cleaned by Shadow Cheats Music\n"]
-        has_login = False
-        count = 0
-        for l in lines:
-            ls = l.strip()
-            if not ls or ls.startswith("#"):
-                continue
-            parts = ls.split("\t")
-            if len(parts) >= 7:
-                if not parts[0].endswith("youtube.com"):
-                    continue
-                if parts[0].startswith("."):
-                    parts[1] = "TRUE"
-                clean.append("\t".join(parts) + "\n")
-                count += 1
-                if any(k in parts[5] for k in ["LOGIN_INFO", "__Secure-3PSID", "__Secure-1PSID", "SID"]):
-                    has_login = True
-        
-        with open(COOKIES_FILE, "w", encoding="utf-8") as f:
-            f.writelines(clean)
-            
-        if has_login and count > 0:
-            COOKIE_ARG = COOKIES_FILE
-            YTDL_OPTIONS["cookiefile"] = COOKIES_FILE
-            print(f"✅ Reloaded {count} authenticated YouTube cookies into memory!")
-            return {"status": "ok", "count": count, "has_login": True}
-        else:
-            COOKIE_ARG = None
-            YTDL_OPTIONS["cookiefile"] = None
-            return {"status": "warning", "count": count, "has_login": False, "message": "No authenticated session cookies found (SID/LOGIN_INFO)."}
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
 try:
     from yt_dlp.networking.impersonate import ImpersonateTarget
     CHROME_TARGET = ImpersonateTarget("chrome")
@@ -380,141 +341,6 @@ try:
 except Exception as _ite:
     CHROME_TARGET = None
     print(f"⚠️ ImpersonateTarget not available: {_ite}")
-
-# ─────────────────────────────────────────────
-#          YOUTUBE OAUTH2 MANAGER (TV FLOW)
-# ─────────────────────────────────────────────
-
-OAUTH_TOKEN_FILE = "youtube_oauth_token.json"
-YT_OAUTH_CLIENT_ID = "861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com"
-YT_OAUTH_CLIENT_SECRET = "SboVhoG9s0rNafixCSGGKXAT"
-YT_OAUTH_SCOPE = "https://gdata.youtube.com https://www.googleapis.com/auth/youtube"
-
-class YouTubeOAuthManager:
-    _cached_token = None
-    _active_flow = None
-
-    @classmethod
-    def load_token(cls) -> Optional[dict]:
-        if cls._cached_token and cls._cached_token.get("refresh_token"):
-            return cls._cached_token
-        if os.path.exists(OAUTH_TOKEN_FILE):
-            try:
-                with open(OAUTH_TOKEN_FILE, "r", encoding="utf-8") as f:
-                    cls._cached_token = json.load(f)
-                    return cls._cached_token
-            except Exception:
-                pass
-        return None
-
-    @classmethod
-    def save_token(cls, token_data: dict):
-        cls._cached_token = token_data
-        try:
-            with open(OAUTH_TOKEN_FILE, "w", encoding="utf-8") as f:
-                json.dump(token_data, f, indent=2)
-            print(f"✅ Saved YouTube OAuth token to {OAUTH_TOKEN_FILE}!")
-        except Exception as e:
-            print(f"⚠️ Error saving YouTube OAuth token: {e}")
-
-    @classmethod
-    def get_valid_access_token(cls) -> Optional[str]:
-        t = cls.load_token()
-        if not t or not t.get("refresh_token"):
-            return None
-        exp = t.get("expires", 0)
-        if exp > time.time() + 60 and t.get("access_token"):
-            return t.get("access_token")
-        try:
-            refresh_data = {
-                "client_id": YT_OAUTH_CLIENT_ID,
-                "client_secret": YT_OAUTH_CLIENT_SECRET,
-                "refresh_token": t["refresh_token"],
-                "grant_type": "refresh_token"
-            }
-            req = urllib.request.Request(
-                "https://www.youtube.com/o/oauth2/token",
-                data=json.dumps(refresh_data).encode(),
-                headers={"Content-Type": "application/json"}
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode())
-                t["access_token"] = data["access_token"]
-                t["expires"] = time.time() + data.get("expires_in", 3600)
-                cls.save_token(t)
-                print("🔄 Refreshed YouTube OAuth access token!")
-                return t["access_token"]
-        except Exception as e:
-            print(f"⚠️ Error refreshing YouTube OAuth token: {e}")
-            return None
-
-    @classmethod
-    def start_device_flow(cls) -> dict:
-        data = {
-            "client_id": YT_OAUTH_CLIENT_ID,
-            "scope": YT_OAUTH_SCOPE
-        }
-        req = urllib.request.Request(
-            "https://www.youtube.com/o/oauth2/device/code",
-            data=json.dumps(data).encode(),
-            headers={"Content-Type": "application/json"}
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            res = json.loads(resp.read().decode())
-            cls._active_flow = {
-                "user_code": res["user_code"],
-                "device_code": res["device_code"],
-                "verification_url": res["verification_url"],
-                "interval": res.get("interval", 5),
-                "expires_at": time.time() + res.get("expires_in", 1800)
-            }
-            return cls._active_flow
-
-    @classmethod
-    def poll_active_flow(cls) -> dict:
-        if not cls._active_flow:
-            return {"status": "no_flow"}
-        if time.time() > cls._active_flow["expires_at"]:
-            cls._active_flow = None
-            return {"status": "expired"}
-        poll_data = {
-            "client_id": YT_OAUTH_CLIENT_ID,
-            "client_secret": YT_OAUTH_CLIENT_SECRET,
-            "device_code": cls._active_flow["device_code"],
-            "grant_type": "urn:ietf:params:oauth:grant-type:device_code"
-        }
-        req = urllib.request.Request(
-            "https://www.youtube.com/o/oauth2/token",
-            data=json.dumps(poll_data).encode(),
-            headers={"Content-Type": "application/json"}
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                res = json.loads(resp.read().decode())
-                token_data = {
-                    "access_token": res["access_token"],
-                    "refresh_token": res["refresh_token"],
-                    "expires": time.time() + res.get("expires_in", 3600),
-                    "token_type": res.get("token_type", "Bearer")
-                }
-                cls.save_token(token_data)
-                cls._active_flow = None
-                return {"status": "success", "token_data": token_data}
-        except urllib.error.HTTPError as e:
-            try:
-                err = json.loads(e.read().decode()).get("error")
-                if err == "authorization_pending":
-                    return {"status": "pending"}
-                elif err == "slow_down":
-                    return {"status": "slow_down"}
-                elif err == "expired_token":
-                    cls._active_flow = None
-                    return {"status": "expired"}
-                return {"status": "error", "error": err}
-            except Exception:
-                return {"status": "error", "error": str(e)}
-        except Exception as ex:
-            return {"status": "error", "error": str(ex)}
 
 # ─────────────────────────────────────────────
 #              DATABASE SYSTEM
@@ -606,17 +432,6 @@ def init_db():
     CREATE TABLE IF NOT EXISTS global_stats (
         stat_name TEXT PRIMARY KEY,
         stat_value INTEGER DEFAULT 0
-    );
-    """)
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS guild_bot_profiles (
-        guild_id INTEGER PRIMARY KEY,
-        name TEXT,
-        bio TEXT,
-        avatar_url TEXT,
-        banner_url TEXT,
-        updated_by INTEGER,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """)
     cursor.execute("UPDATE guild_settings SET stay_247 = 1 WHERE stay_247 = 0")
@@ -1003,50 +818,6 @@ class Database:
         conn.close()
         return removed
 
-    @staticmethod
-    def get_bot_profile(guild_id: int) -> dict:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name, bio, avatar_url, banner_url, updated_by, updated_at FROM guild_bot_profiles WHERE guild_id = ?", (guild_id,))
-        row = cursor.fetchone()
-        conn.close()
-        if row:
-            return {
-                "name": row[0],
-                "bio": row[1],
-                "avatar_url": row[2],
-                "banner_url": row[3],
-                "updated_by": row[4],
-                "updated_at": row[5]
-            }
-        return {}
-
-    @staticmethod
-    def set_bot_profile(guild_id: int, name: Optional[str] = None, bio: Optional[str] = None, avatar_url: Optional[str] = None, banner_url: Optional[str] = None, updated_by: Optional[int] = None):
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO guild_bot_profiles (guild_id, name, bio, avatar_url, banner_url, updated_by, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(guild_id) DO UPDATE SET
-                name = CASE WHEN ? IS NOT NULL THEN ? ELSE guild_bot_profiles.name END,
-                bio = CASE WHEN ? IS NOT NULL THEN ? ELSE guild_bot_profiles.bio END,
-                avatar_url = CASE WHEN ? IS NOT NULL THEN ? ELSE guild_bot_profiles.avatar_url END,
-                banner_url = CASE WHEN ? IS NOT NULL THEN ? ELSE guild_bot_profiles.banner_url END,
-                updated_by = CASE WHEN ? IS NOT NULL THEN ? ELSE guild_bot_profiles.updated_by END,
-                updated_at = CURRENT_TIMESTAMP
-        """, (guild_id, name, bio, avatar_url, banner_url, updated_by, name, name, bio, bio, avatar_url, avatar_url, banner_url, banner_url, updated_by, updated_by))
-        conn.commit()
-        conn.close()
-
-    @staticmethod
-    def reset_bot_profile(guild_id: int):
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM guild_bot_profiles WHERE guild_id = ?", (guild_id,))
-        conn.commit()
-        conn.close()
-
 # ─────────────────────────────────────────────
 #             SPOTIFY RESOLVER CLASS
 # ─────────────────────────────────────────────
@@ -1232,34 +1003,16 @@ YTDL_OPTIONS = {
     "no_warnings": True,
     "default_search": "ytsearch",
     "cookiefile": None,
-    "socket_timeout": 8,
-    "retries": 1,
-    "extractor_retries": 1,
+    "socket_timeout": 15,
+    "retries": 2,
+    "extractor_retries": 2,
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "web_embedded"],
+            "player_client": ["android", "ios"],
             "player_skip": ["webpage"]
         }
     },
 }
-
-
-def get_po_token(video_id: str = "") -> dict:
-    try:
-        import urllib.request, json
-        req = urllib.request.Request(
-            "http://127.0.0.1:4416/get_pot",
-            data=json.dumps({"content_binding": video_id, "bypass_cache": False}).encode("utf-8"),
-            headers={"Content-Type": "application/json"}
-        )
-        with urllib.request.urlopen(req, timeout=10.0) as resp:
-            if resp.status == 200:
-                data = json.loads(resp.read().decode("utf-8"))
-                print(f"✅ Successfully acquired PO Token from bgutil-pot: {list(data.keys())}")
-                return data
-    except Exception as ex:
-        print(f"⚠️ get_po_token error: {ex}")
-    return {}
 
 # ─────────────────────────────────────────────
 #                 EMBED HELPERS (MODERN UI)
@@ -1380,24 +1133,7 @@ class YTSource(discord.PCMVolumeTransformer):
         q = f"ytsearch5:{query}" if is_search else query
             
         def run():
-            opts_v = opts.copy()
-            opts_v["extractor_args"] = {"youtube": {"player_client": ["visionos"]}}
-            try:
-                return yt_dlp.YoutubeDL(opts_v).extract_info(q, download=False)
-            except Exception:
-                pass
-            ytdl = yt_dlp.YoutubeDL(opts)
-            try:
-                return ytdl.extract_info(q, download=False)
-            except Exception as e:
-                if opts.get("cookiefile"):
-                    opts_no = opts.copy()
-                    opts_no["cookiefile"] = None
-                    try:
-                        return yt_dlp.YoutubeDL(opts_no).extract_info(q, download=False)
-                    except Exception:
-                        pass
-                raise e
+            return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
 
         data = await loop.run_in_executor(None, run)
         if data and "entries" in data and len(data["entries"]) > 0:
@@ -1457,24 +1193,7 @@ class YTSource(discord.PCMVolumeTransformer):
             q = query
         
         def run():
-            opts_v = opts.copy()
-            opts_v["extractor_args"] = {"youtube": {"player_client": ["visionos"]}}
-            try:
-                return yt_dlp.YoutubeDL(opts_v).extract_info(q, download=False)
-            except Exception:
-                pass
-            ytdl = yt_dlp.YoutubeDL(opts)
-            try:
-                return ytdl.extract_info(q, download=False)
-            except Exception as e:
-                if opts.get("cookiefile"):
-                    opts_no = opts.copy()
-                    opts_no["cookiefile"] = None
-                    try:
-                        return yt_dlp.YoutubeDL(opts_no).extract_info(q, download=False)
-                    except Exception:
-                        pass
-                raise e
+            return yt_dlp.YoutubeDL(opts).extract_info(q, download=False)
 
         data = await loop.run_in_executor(None, run)
         if not data:
@@ -1552,25 +1271,24 @@ class YTSource(discord.PCMVolumeTransformer):
         opts["extract_flat"] = False
         opts["format"] = "18/bestaudio/best/b"
         opts["cookiefile"] = None
-        opts["socket_timeout"] = 8
+        opts["socket_timeout"] = 15
 
         def run():
             try:
                 return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
             except Exception as e:
-                print(f"⚠️ Primary Android extract failed ({e}). Attempting fallback...")
+                print(f"⚠️ Primary Android/iOS extract failed ({e}). Attempting fallback...")
                 try:
                     fallback_opts = opts.copy()
-                    fallback_opts["format"] = "bestaudio/best/b"
+                    fallback_opts["format"] = "18/bestaudio/best/b"
                     fallback_opts["extractor_args"] = {
                         "youtube": {
-                            "player_client": ["android", "web_embedded"],
+                            "player_client": ["android", "ios", "web_embedded"],
                             "player_skip": ["webpage"]
                         }
                     }
                     return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
                 except Exception as fb_err:
-                    print(f"❌ YouTube fallback failed ({fb_err})")
                     if COOKIE_ARG and os.path.exists(COOKIE_ARG) and os.path.getsize(COOKIE_ARG) > 50:
                         try:
                             cookie_opts = opts.copy()
@@ -1579,12 +1297,12 @@ class YTSource(discord.PCMVolumeTransformer):
                             cookie_opts["extractor_args"] = {
                                 "youtube": {
                                     "player_client": ["web", "android"],
-                                    "player_skip": ["webpage"]
                                 }
                             }
                             return yt_dlp.YoutubeDL(cookie_opts).extract_info(url, download=False)
                         except Exception:
                             pass
+                    print(f"❌ YouTube fallback failed ({fb_err})")
                     raise e
 
         data = await loop.run_in_executor(None, run)
@@ -1601,16 +1319,11 @@ class YTSource(discord.PCMVolumeTransformer):
         ffmpeg_opts = get_ffmpeg_options(active_filter, speed, pitch)
         ffmpeg_opts["before_options"] += f' -user_agent "{ua}"'
         
-        cookie_header = headers.get("Cookie") or headers.get("cookie")
-        if cookie_header:
-            ffmpeg_opts["before_options"] += f' -headers "Cookie: {cookie_header}\r\n"'
-
         if seek_time > 0:
             ffmpeg_opts["before_options"] += f" -ss {seek_time}"
             
         src = discord.FFmpegPCMAudio(stream_url, executable=get_ffmpeg_executable(), **ffmpeg_opts)
         return cls(src, data=data, volume=volume)
-
 
 # ─────────────────────────────────────────────
 #             GUILD PLAYER STATE
@@ -1622,7 +1335,7 @@ class GuildPlayer:
         self.queue = deque()
         self.history = deque(maxlen=30)
         self.current: Optional[dict] = None
-        self._voice: Optional[discord.VoiceClient] = None
+        self.voice: Optional[discord.VoiceClient] = None
         self.volume = 1.0
         self.loop = "off"  # "off", "track", "queue"
         self.autoplay = False
@@ -1643,23 +1356,6 @@ class GuildPlayer:
         self.inactive_since: Optional[float] = None
         self.is_connecting = False
         self.skip_votes = set()
-
-    @property
-    def voice(self) -> Optional[discord.VoiceClient]:
-        if hasattr(self, "_voice") and self._voice and self._voice.is_connected() and getattr(self._voice, "guild", None) and self._voice.guild.id == self.guild_id:
-            return self._voice
-        g = bot.get_guild(self.guild_id)
-        if g and g.voice_client and g.voice_client.is_connected():
-            self._voice = g.voice_client
-            return self._voice
-        return None
-
-    @voice.setter
-    def voice(self, val):
-        if val is None:
-            self._voice = None
-        elif getattr(val, "guild", None) and val.guild.id == self.guild_id:
-            self._voice = val
 
     @property
     def position(self):
@@ -2166,23 +1862,23 @@ class MusicBot(commands.Bot):
             print("ℹ️ bgutil-pot binary not found in system PATH. Skipping background server launch.")
 
     async def keep_alive_pinger(self):
-        """24/7 Free Hosting Keepalive: Pings self URL every 2 minutes to prevent Render from sleeping."""
+        """24/7 Free Hosting Keepalive: Pings self URL every 5 minutes to prevent Render from sleeping."""
         await self.wait_until_ready()
         target_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://shadow-cheats-music-eu.onrender.com"
-        ping_endpoint = f"{target_url.rstrip('/')}/api/health"
-        print(f"🔄 24/7 Keepalive self-pinger initialized for {ping_endpoint} (interval: 120s)")
+        ping_endpoint = f"{target_url.rstrip('/')}/health"
+        print(f"🔄 24/7 Keepalive self-pinger initialized for {ping_endpoint} (interval: 300s)")
         
         while not self.is_closed():
             try:
-                await asyncio.sleep(120)
+                await asyncio.sleep(300)
                 async with aiohttp.ClientSession() as session:
                     async with session.get(ping_endpoint, timeout=15) as resp:
                         if resp.status == 200:
                             pass
                         else:
                             print(f"⚠️ Keepalive ping returned status {resp.status}")
-            except Exception as e:
-                print(f"⚠️ Keepalive ping error: {e}")
+            except Exception:
+                pass
 
     async def start_health_server(self):
         if getattr(self, '_health_server_running', False):
@@ -2328,9 +2024,8 @@ class MusicBot(commands.Bot):
 
             async def test_stream_view(request):
                 url = request.query.get("url") or request.query.get("q") or "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-                title_arg = request.query.get("title") or request.query.get("name")
                 try:
-                    src = await YTSource.stream(url, asyncio.get_event_loop(), track_title=title_arg)
+                    src = await YTSource.stream(url, asyncio.get_event_loop())
                     stream_url = src.data.get("url") if src.data else None
                     title = src.data.get("title") if src.data else "Unknown"
                     domain = stream_url.split("/")[2] if stream_url else None
@@ -2854,11 +2549,11 @@ class MusicBot(commands.Bot):
                     for g in self.guilds:
                         try:
                             self.tree.clear_commands(guild=g)
-                            await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(self.tree.sync(guild=g), self.loop))
+                            await self.tree.sync(guild=g)
                             cleared_guilds += 1
-                        except Exception as ge:
-                            print(f"Error clearing guild {g.name}: {ge}")
-                    synced = await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(self.tree.sync(), self.loop))
+                        except Exception:
+                            pass
+                    synced = await self.tree.sync()
                     return web.json_response({
                         "status": "ok",
                         "cleared_guilds": cleared_guilds,
@@ -2868,32 +2563,6 @@ class MusicBot(commands.Bot):
                 except Exception as e:
                     return web.json_response({"status": "error", "error": str(e)}, status=500)
 
-            async def test_pot_view(request):
-                vid = request.query.get("v", "DLlXI1-_o7Y")
-                ping_ok = False
-                try:
-                    async with aiohttp.ClientSession() as sess:
-                        async with sess.get("http://127.0.0.1:4416/ping", timeout=1.0) as resp:
-                            ping_ok = (resp.status == 200)
-                except Exception as pe:
-                    ping_ok = str(pe)
-
-                pot_res = {}
-                pot_err = None
-                try:
-                    pot_res = get_po_token(vid)
-                except Exception as ge:
-                    pot_err = str(ge)
-
-                return web.json_response({
-                    "status": "ok",
-                    "video_id": vid,
-                    "ping": ping_ok,
-                    "has_token": bool(pot_res.get("poToken")),
-                    "token_keys": list(pot_res.keys()),
-                    "error": pot_err
-                })
-
             app.router.add_get("/", root_view)
             app.router.add_get("/api/health", health_check)
             app.router.add_get("/health", health_check)
@@ -2901,162 +2570,10 @@ class MusicBot(commands.Bot):
             app.router.add_get("/api/logs", logs_view)
             app.router.add_get("/api/test_extract", test_extract_view)
             app.router.add_get("/api/test_stream", test_stream_view)
-            app.router.add_get("/api/test_pot", test_pot_view)
             app.router.add_get("/api/formats", formats_view)
             app.router.add_get("/api/test_pcm", test_pcm_view)
             app.router.add_get("/api/diagnose", diagnose_view)
             app.router.add_get("/api/test_play", test_play_view)
-            async def cookies_html_view(request):
-                has_cookies = bool(COOKIE_ARG and os.path.exists(COOKIE_ARG) and os.path.getsize(COOKIE_ARG) > 50)
-                badge_cls = "badge-active" if has_cookies else "badge-missing"
-                badge_txt = "🟢 Active Session Loaded" if has_cookies else "🔴 No Valid Cookies Loaded"
-                has_oauth = bool(YouTubeOAuthManager.get_valid_access_token())
-                oauth_cls = "badge-active" if has_oauth else "badge-missing"
-                oauth_txt = "🟢 YouTube TV OAuth Active" if has_oauth else "🔴 Not Authenticated via OAuth"
-                html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>🍪 YouTube Cookies Manager • SHADOW CHEATS MUSIC</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <style>
-        :root {{
-            --bg-base: #08090C;
-            --bg-surface: #101216;
-            --bg-card: #16181F;
-            --primary: #5865F2;
-            --text-main: #FFFFFF;
-            --text-muted: #8E9297;
-            --border: rgba(255, 255, 255, 0.08);
-            --radius-md: 12px;
-        }}
-        * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: 'Plus Jakarta Sans', sans-serif; }}
-        body {{ background: var(--bg-base); color: var(--text-main); padding: 40px 20px; display: flex; justify-content: center; }}
-        .container {{ max-width: 680px; width: 100%; }}
-        .card {{ background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 28px; }}
-        h1 {{ font-size: 22px; font-weight: 700; margin-bottom: 8px; }}
-        p {{ color: var(--text-muted); font-size: 14px; line-height: 1.5; margin-bottom: 20px; }}
-        .status-badge {{ display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; margin-bottom: 20px; }}
-        .badge-active {{ background: rgba(16, 185, 129, 0.15); color: #34D399; }}
-        .badge-missing {{ background: rgba(239, 68, 68, 0.15); color: #F87171; }}
-        textarea {{ width: 100%; height: 200px; background: var(--bg-base); border: 1px solid var(--border); border-radius: 8px; padding: 14px; color: #FFF; font-family: 'JetBrains Mono', monospace; font-size: 13px; resize: vertical; margin-bottom: 16px; }}
-        textarea:focus {{ outline: none; border-color: var(--primary); }}
-        .btn {{ width: 100%; background: var(--primary); color: #FFF; border: none; padding: 14px; border-radius: 8px; font-weight: 600; font-size: 15px; cursor: pointer; transition: 0.2s; }}
-        .btn:hover {{ opacity: 0.9; transform: translateY(-1px); }}
-        .instructions {{ margin-top: 24px; padding: 16px; background: rgba(255,255,255,0.02); border-radius: 8px; font-size: 13px; color: var(--text-muted); }}
-        .instructions b {{ color: #FFF; }}
-        .instructions ol {{ margin-left: 20px; margin-top: 8px; }}
-        .instructions li {{ margin-bottom: 6px; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="card">
-            <h1>🍪 YouTube Cookies Manager</h1>
-            <p>Datacenter IPs require authenticated cookies to stream from YouTube without bot blocks.</p>
-            <div class="status-badge {badge_cls}">
-                {badge_txt}
-            </div>
-            <form method="POST" action="/cookies">
-                <textarea name="cookies" placeholder="Paste the complete contents of cookies.txt here..."></textarea>
-                <button type="submit" class="btn">Save & Reload Cookies</button>
-            </form>
-            <div class="instructions">
-                <b>How to get cookies in 10 seconds:</b>
-                <ol>
-                    <li>Install the free Chrome/Brave extension <b>&quot;Get cookies.txt LOCALLY&quot;</b></li>
-                    <li>Open <b>youtube.com</b> (signed in to your account)</li>
-                    <li>Click the extension icon &gt; click <b>Export</b></li>
-                    <li>Open the file, copy all text, and paste it into the box above!</li>
-                </ol>
-            </div>
-        <div class="card" style="margin-top: 24px;">
-            <h1>🔐 Permanent YouTube Device Link (Zero Cookies)</h1>
-            <p>Authenticate as an official YouTube TV app. 100% immune to datacenter bot checks.</p>
-            <div id="oauth-status" class="status-badge {oauth_cls}">{oauth_txt}</div>
-            <div id="oauth-controls">
-                <button type="button" class="btn" style="background: #22C55E;" onclick="startOAuth()">Get Instant Link Code</button>
-            </div>
-            <div id="oauth-display" style="display: none; margin-top: 20px; padding: 16px; background: rgba(255,255,255,0.03); border-radius: 8px;">
-                <p style="font-size: 15px; margin-bottom: 10px;">1. Open <a id="oauth-link" href="https://www.google.com/device" target="_blank" style="color: #5865F2; font-weight: 700; text-decoration: underline;">google.com/device</a></p>
-                <p style="font-size: 15px; margin-bottom: 12px;">2. Enter Code: <b id="oauth-code" style="font-size: 22px; color: #F59E0B; letter-spacing: 2px; font-family: 'JetBrains Mono', monospace;"></b></p>
-                <p id="oauth-msg" style="color: #8E9297; font-size: 13px;">⏳ Waiting for confirmation on Google...</p>
-            </div>
-        </div>
-    </div>
-    <script>
-    function startOAuth() {{
-        fetch('/api/oauth/start').then(r => r.json()).then(d => {{
-            if (d.user_code) {{
-                document.getElementById('oauth-display').style.display = 'block';
-                document.getElementById('oauth-code').innerText = d.user_code;
-                document.getElementById('oauth-link').href = d.verification_url;
-                let poller = setInterval(() => {{
-                    fetch('/api/oauth/status').then(r => r.json()).then(res => {{
-                        if (res.status === 'success') {{
-                            clearInterval(poller);
-                            document.getElementById('oauth-msg').innerText = '✅ YouTube TV Link Confirmed! All bot blocks bypassed forever!';
-                            document.getElementById('oauth-msg').style.color = '#34D399';
-                            document.getElementById('oauth-status').className = 'status-badge badge-active';
-                            document.getElementById('oauth-status').innerText = '🟢 YouTube TV OAuth Active';
-                        }} else if (res.status === 'expired') {{
-                            clearInterval(poller);
-                            document.getElementById('oauth-msg').innerText = '⚠️ Code expired. Please refresh and try again.';
-                        }}
-                    }});
-                }}, 4000);
-            }}
-        }});
-    }}
-    </script>
-</body>
-</html>"""
-                return web.Response(text=html, content_type="text/html")
-
-            async def cookies_post_view(request):
-                try:
-                    if request.content_type == "application/json":
-                        data = await request.json()
-                        raw = data.get("cookies", "")
-                    else:
-                        post_data = await request.post()
-                        raw = post_data.get("cookies", "")
-                    res = reload_youtube_cookies(raw)
-                    if res.get("status") == "ok":
-                        return web.Response(text=f"✅ SUCCESS: Loaded {res.get('count')} YouTube cookies. Bot detection bypassed! You can return to Discord.", content_type="text/plain")
-                    else:
-                        return web.Response(text=f"⚠️ WARNING: {res.get('message', res.get('error'))}", content_type="text/plain", status=400)
-                except Exception as ex:
-                    return web.Response(text=f"❌ ERROR: {ex}", content_type="text/plain", status=500)
-
-            async def oauth_start_view(request):
-                try:
-                    flow = YouTubeOAuthManager.start_device_flow()
-                    return web.json_response({
-                        "status": "ok",
-                        "user_code": flow.get("user_code"),
-                        "verification_url": flow.get("verification_url"),
-                        "expires_in": int(flow.get("expires_at", 0) - time.time())
-                    })
-                except Exception as ex:
-                    return web.json_response({"status": "error", "error": str(ex)}, status=500)
-
-            async def oauth_status_view(request):
-                try:
-                    is_authed = bool(YouTubeOAuthManager.get_valid_access_token())
-                    if is_authed:
-                        return web.json_response({"status": "success", "authenticated": True})
-                    res = YouTubeOAuthManager.poll_active_flow()
-                    return web.json_response(res)
-                except Exception as ex:
-                    return web.json_response({"status": "error", "error": str(ex)}, status=500)
-
-            app.router.add_get("/cookies", cookies_html_view)
-            app.router.add_post("/cookies", cookies_post_view)
-            app.router.add_post("/api/cookies", cookies_post_view)
-            app.router.add_get("/api/oauth/start", oauth_start_view)
-            app.router.add_get("/api/oauth/status", oauth_status_view)
             app.router.add_get("/api/sync_commands", sync_commands_api)
             app.router.add_post("/api/sync_commands", sync_commands_api)
 
@@ -3103,9 +2620,8 @@ class MusicBot(commands.Bot):
                         await self.tree.sync(guild=g)
                         await asyncio.sleep(0.5)
                     except Exception as ge:
-                        print(f"⚠️ Guild duplicate purge warning for {g.name}: {ge}")
-                synced = await self.tree.sync()
-                print(f"🧹 Purged all duplicate guild commands! Single clean global tree active with {len(synced)} unique commands.")
+                        print(f"⚠️ Guild cleanup warning for {g.name}: {ge}")
+                print(f"🧹 Purged all duplicate guild commands across {len(self.guilds)} guilds. Single clean global tree active.")
             except Exception as e:
                 print(f"⚠️ Duplicate cleanup error: {e}")
         asyncio.create_task(purge_guild_duplicates())
@@ -3151,105 +2667,15 @@ bot = MusicBot()
 @bot.command(name="sync", description="Purge duplicate guild commands and sync single global tree")
 @commands.has_permissions(administrator=True)
 async def cmd_sync(ctx: commands.Context):
-    msg = await ctx.send("🧹 Purging all duplicate commands from this server and syncing single clean tree...")
+    msg = await ctx.send("🧹 Purging duplicate guild commands from this server...")
     try:
         if ctx.guild:
             bot.tree.clear_commands(guild=ctx.guild)
             await bot.tree.sync(guild=ctx.guild)
         synced = await bot.tree.sync()
-        await msg.edit(content=f"✅ All duplicate commands purged! Single clean global tree active with **{len(synced)}** unique commands.")
+        await msg.edit(content=f"✅ Purged duplicates! Single clean global slash tree active with **{len(synced)}** unique commands.")
     except Exception as e:
         await msg.edit(content=f"⚠️ Sync error: {e}")
-
-@bot.command(name="cookies", description="Update YouTube session cookies to bypass bot detection")
-@commands.has_permissions(administrator=True)
-async def cmd_cookies(ctx: commands.Context, *, raw_cookies: Optional[str] = None):
-    content = ""
-    if ctx.message.attachments:
-        att = ctx.message.attachments[0]
-        try:
-            content = (await att.read()).decode("utf-8", errors="ignore")
-        except Exception as ae:
-            await ctx.send(f"⚠️ Failed to read attachment: {ae}")
-            return
-    elif raw_cookies:
-        content = raw_cookies
-    else:
-        dashboard_url = "https://shadow-cheats-music-eu.onrender.com/cookies"
-        e = discord.Embed(
-            title="🍪 YouTube Cookies Setup",
-            description=(
-                f"Datacenter hosting (Render) requires authenticated cookies to stream from YouTube.\n\n"
-                f"**How to update:**\n"
-                f"1. Open [Web Cookies Manager]({dashboard_url}) to paste or upload `cookies.txt` directly\n"
-                f"2. Or type `.cookies` and attach your `cookies.txt` file here in Discord.\n\n"
-                f"**How to get cookies (10 seconds):**\n"
-                f"• Install Chrome/Brave extension `Get cookies.txt LOCALLY`\n"
-                f"• Go to `youtube.com` (logged into any Google account)\n"
-                f"• Click extension icon -> **Export** -> attach or paste here!"
-            ),
-            color=0x5865F2
-        )
-        await ctx.send(embed=e)
-        return
-
-    res = reload_youtube_cookies(content)
-    if res.get("status") == "ok":
-        e = discord.Embed(
-            title="✅ Cookies Updated & Active",
-            description=f"Successfully loaded **{res.get('count')}** YouTube cookies.\nBot detection bypassed for live streaming!",
-            color=0x57F287
-        )
-    else:
-        e = discord.Embed(
-            title="⚠️ Cookie Warning",
-            description=f"Loaded {res.get('count', 0)} lines. {res.get('message', res.get('error'))}",
-            color=0xFEE75C
-        )
-    await ctx.send(embed=e)
-
-@bot.command(name="oauth", aliases=["ytlogin", "linkyoutube"], description="Link YouTube via TV OAuth to permanently bypass bot blocks")
-@commands.has_permissions(administrator=True)
-async def cmd_oauth(ctx: commands.Context):
-    msg = await ctx.send("⏳ Generating Google device authorization code...")
-    try:
-        flow = YouTubeOAuthManager.start_device_flow()
-        code = flow["user_code"]
-        link = flow["verification_url"]
-        
-        e = discord.Embed(
-            title="🔐 YouTube TV Authentication (Permanent Bypass)",
-            description=(
-                f"Follow these simple steps to link YouTube directly without cookies:\n\n"
-                f"1. Open **[google.com/device]({link})** on your phone or PC\n"
-                f"2. Enter Code: **`{code}`**\n"
-                f"3. Sign in to any Google account and click **Allow**\n\n"
-                f"⏳ *Listening for authorization... The bot will update this message automatically once confirmed.*"
-            ),
-            color=0x5865F2
-        )
-        await msg.edit(content=None, embed=e)
-        
-        for _ in range(60):
-            await asyncio.sleep(5)
-            res = YouTubeOAuthManager.poll_active_flow()
-            if res.get("status") == "success":
-                success_e = discord.Embed(
-                    title="✅ YouTube Authenticated Successfully!",
-                    description=(
-                        "🎉 **Device OAuth Link Active!**\n\n"
-                        "The bot is now authenticated as an official YouTube TV app.\n"
-                        "All YouTube bot-checks and datacenter blocks are permanently bypassed 24/7!"
-                    ),
-                    color=0x57F287
-                )
-                await msg.edit(embed=success_e)
-                return
-            elif res.get("status") == "expired":
-                await msg.edit(content="⚠️ Device code expired. Please run `.oauth` again.", embed=None)
-                return
-    except Exception as ex:
-        await msg.edit(content=f"⚠️ Failed to initiate YouTube OAuth flow: {ex}", embed=None)
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -3442,13 +2868,11 @@ async def check_voice_channels():
 
 async def ensure_vc(ctx: commands.Context) -> Optional[discord.VoiceClient]:
     p = bot.get_player(ctx.guild.id)
-    if hasattr(ctx, "channel") and ctx.channel:
-        p.text_ch = ctx.channel
-    author = getattr(ctx, "author", None) or getattr(ctx, "user", None)
-    if not author or not getattr(author, "voice", None) or not author.voice.channel:
+    p.text_ch = ctx.channel
+    if not ctx.author.voice or not ctx.author.voice.channel:
         await send_response(ctx, embed=err("You must join a voice channel first!"))
         return None
-    ch = author.voice.channel
+    ch = ctx.author.voice.channel
 
     # Check guild voice client in discord.py
     existing_vc = ctx.guild.voice_client
@@ -5053,263 +4477,6 @@ async def slash_toggledj(ctx: commands.Context):
     conn.commit()
     conn.close()
     await send_response(ctx, embed=ok("DJ Mode Toggled", f"DJ role restriction enforcement is now **{'Enabled ✅' if new_state else 'Disabled ❌'}**."))
-
-async def bot_profile_logic(
-    ctx: commands.Context,
-    name: Optional[str] = None,
-    bio: Optional[str] = None,
-    avatar: Optional[discord.Attachment] = None,
-    avatar_url: Optional[str] = None,
-    banner: Optional[discord.Attachment] = None,
-    banner_url: Optional[str] = None,
-    reset: Optional[bool] = False
-):
-    if not ctx.guild:
-        return await send_response(ctx, embed=err("This command can only be used inside a Discord server."))
-
-    is_viewing = (
-        name is None and
-        bio is None and
-        avatar is None and
-        avatar_url is None and
-        banner is None and
-        banner_url is None and
-        not reset
-    )
-
-    saved_prof = Database.get_bot_profile(ctx.guild.id)
-
-    if is_viewing:
-        current_nick = ctx.guild.me.nick or f"None (Default: {bot.user.name})"
-        current_bio = saved_prof.get("bio") or "None set"
-        
-        e = discord.Embed(
-            title=f"🎭 Server Bot Profile: {ctx.guild.name}",
-            description=f"This bot profile is **unique to this server** (`{ctx.guild.name}`). Other servers are unaffected.\n",
-            color=0x2B2D31,
-            timestamp=datetime.now(timezone.utc)
-        )
-        e.add_field(name="🏷️ Server Nickname", value=f"`{current_nick}`", inline=True)
-        e.add_field(name="📝 Server Bio", value=f"```{current_bio[:500]}```", inline=False)
-
-        current_avatar = ctx.guild.me.guild_avatar.url if ctx.guild.me.guild_avatar else (bot.user.avatar.url if bot.user and bot.user.avatar else None)
-        if current_avatar:
-            e.set_thumbnail(url=current_avatar)
-        
-        current_banner = ctx.guild.me.guild_banner.url if getattr(ctx.guild.me, 'guild_banner', None) else saved_prof.get("banner_url")
-        if current_banner:
-            e.set_image(url=current_banner)
-
-        e.add_field(
-            name="⚙️ How to Customize (This Server Only)",
-            value=(
-                "• **`/bot profile name:NewName`** — Change bot nickname in this server\n"
-                "• **`/bot profile bio:Line 1\\nLine 2`** — Set server bio (use `\\n` for newlines)\n"
-                "• **`/bot profile avatar:[image]`** — Upload avatar for this server\n"
-                "• **`/bot profile banner:[image]`** — Upload banner for this server\n"
-                "• **`/bot profile reset:True`** — Reset server profile back to global default"
-            ),
-            inline=False
-        )
-        e.set_footer(text=f"Server ID: {ctx.guild.id} • Shadow Cheats Music", icon_url=current_avatar)
-        return await send_response(ctx, embed=e)
-
-    # Permission check for modifying
-    has_perm = (
-        ctx.author.guild_permissions.administrator or
-        ctx.author.guild_permissions.manage_guild or
-        ctx.author.id == ctx.guild.owner_id or
-        ctx.author.id in OWNER_IDS
-    )
-    if not has_perm:
-        return await send_response(ctx, embed=err("Permission Denied: You need **Manage Server** or **Administrator** permission to modify the bot's profile in this server."))
-
-    if ctx.interaction and not ctx.interaction.response.is_done():
-        try:
-            await ctx.interaction.response.defer()
-        except Exception:
-            pass
-
-    avatar_bytes = None
-    applied_avatar_url = None
-    if avatar:
-        try:
-            avatar_bytes = await avatar.read()
-            applied_avatar_url = avatar.url
-        except Exception as e:
-            return await send_response(ctx, embed=err(f"Failed to read avatar attachment: {e}"))
-    elif avatar_url:
-        try:
-            async with aiohttp.ClientSession() as s:
-                async with s.get(avatar_url, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                    if r.status == 200:
-                        avatar_bytes = await r.read()
-                        applied_avatar_url = avatar_url
-                    else:
-                        return await send_response(ctx, embed=err(f"Failed to download avatar from URL (HTTP {r.status})."))
-        except Exception as e:
-            return await send_response(ctx, embed=err(f"Error fetching avatar URL: {e}"))
-
-    banner_bytes = None
-    applied_banner_url = None
-    if banner:
-        try:
-            banner_bytes = await banner.read()
-            applied_banner_url = banner.url
-        except Exception as e:
-            return await send_response(ctx, embed=err(f"Failed to read banner attachment: {e}"))
-    elif banner_url:
-        try:
-            async with aiohttp.ClientSession() as s:
-                async with s.get(banner_url, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                    if r.status == 200:
-                        banner_bytes = await r.read()
-                        applied_banner_url = banner_url
-                    else:
-                        return await send_response(ctx, embed=err(f"Failed to download banner from URL (HTTP {r.status})."))
-        except Exception as e:
-            return await send_response(ctx, embed=err(f"Error fetching banner URL: {e}"))
-
-    edit_kwargs = {}
-    cleaned_bio = None
-
-    if reset:
-        edit_kwargs["nick"] = None
-        edit_kwargs["avatar"] = None
-        edit_kwargs["banner"] = None
-        edit_kwargs["bio"] = None
-        Database.reset_bot_profile(ctx.guild.id)
-    else:
-        if name is not None:
-            if name.lower() in ("reset", "none", "clear", "default"):
-                edit_kwargs["nick"] = None
-            else:
-                edit_kwargs["nick"] = name.strip()[:32]
-
-        if bio is not None:
-            if bio.lower() in ("reset", "none", "clear", "default"):
-                cleaned_bio = None
-                edit_kwargs["bio"] = None
-            else:
-                cleaned_bio = bio.replace("\\n", "\n").strip()[:190]
-                edit_kwargs["bio"] = cleaned_bio
-
-        if avatar_bytes is not None:
-            edit_kwargs["avatar"] = avatar_bytes
-
-        if banner_bytes is not None:
-            edit_kwargs["banner"] = banner_bytes
-
-    if not edit_kwargs and not reset:
-        return await send_response(ctx, embed=err("No profile changes provided."))
-
-    banner_warning = None
-    try:
-        await ctx.guild.me.edit(**edit_kwargs, reason=f"Server bot profile updated by {ctx.author} ({ctx.author.id})")
-    except discord.HTTPException as he:
-        if "banner" in edit_kwargs and len(edit_kwargs) > 1:
-            edit_kwargs.pop("banner", None)
-            banner_warning = "Server banner could not be applied (server may require Discord Boost Level for member banners)."
-            try:
-                await ctx.guild.me.edit(**edit_kwargs, reason=f"Server bot profile updated (banner skipped) by {ctx.author}")
-            except Exception as he2:
-                return await send_response(ctx, embed=err(f"Discord API error while updating profile: {he2}"))
-        else:
-            return await send_response(ctx, embed=err(f"Discord API error while updating profile: {he}"))
-    except discord.Forbidden as fe:
-        return await send_response(ctx, embed=err(f"Bot lacks permissions to update profile in this server: {fe}"))
-    except Exception as ex:
-        return await send_response(ctx, embed=err(f"Unexpected error: {ex}"))
-
-    if not reset:
-        db_nick = edit_kwargs.get("nick") if "nick" in edit_kwargs else None
-        db_bio = cleaned_bio if bio is not None else None
-        Database.set_bot_profile(
-            guild_id=ctx.guild.id,
-            name=db_nick,
-            bio=db_bio,
-            avatar_url=applied_avatar_url,
-            banner_url=applied_banner_url,
-            updated_by=ctx.author.id
-        )
-
-    current_avatar = ctx.guild.me.guild_avatar.url if ctx.guild.me.guild_avatar else (bot.user.avatar.url if bot.user and bot.user.avatar else None)
-    e = discord.Embed(
-        title="✅ Server Bot Profile Updated",
-        description=f"Bot profile has been successfully updated **strictly for {ctx.guild.name}**.\nNo other servers were affected.",
-        color=0x2B2D31,
-        timestamp=datetime.now(timezone.utc)
-    )
-    if reset:
-        e.add_field(name="🔄 Reset Status", value="All server profile settings have been reset back to global defaults.", inline=False)
-    else:
-        if "nick" in edit_kwargs:
-            e.add_field(name="🏷️ Nickname", value=f"`{edit_kwargs['nick'] or 'Default'}`", inline=True)
-        if bio is not None:
-            e.add_field(name="📝 Bio", value=f"```{cleaned_bio or 'Cleared'}```", inline=False)
-        if avatar_bytes is not None:
-            e.add_field(name="🖼️ Avatar", value="[Updated for this server]", inline=True)
-        if banner_bytes is not None and not banner_warning:
-            e.add_field(name="🎨 Banner", value="[Updated for this server]", inline=True)
-        if banner_warning:
-            e.add_field(name="⚠️ Note", value=banner_warning, inline=False)
-
-    if current_avatar:
-        e.set_thumbnail(url=current_avatar)
-    if applied_banner_url:
-        e.set_image(url=applied_banner_url)
-
-    e.set_footer(text=f"Updated by {ctx.author.display_name} • {ctx.guild.name}", icon_url=ctx.author.display_avatar.url)
-    await send_response(ctx, embed=e)
-
-@bot.hybrid_group(name="bot", description="Manage bot configuration and profile in this server", invoke_without_command=True)
-async def bot_group_cmd(ctx: commands.Context):
-    if ctx.invoked_subcommand is None:
-        await bot_profile_logic(ctx)
-
-@bot_group_cmd.command(name="profile", description="Change bot avatar, banner, bio, and nickname in this server only")
-@app_commands.describe(
-    name="New bot nickname for this server only",
-    bio="New server bio (use \\n for line breaks)",
-    avatar="Upload an avatar image for this server only",
-    avatar_url="Direct image URL for avatar",
-    banner="Upload a banner image for this server only",
-    banner_url="Direct image URL for banner",
-    reset="Reset server profile back to global defaults (True/False)"
-)
-async def bot_profile_subcmd(
-    ctx: commands.Context,
-    name: Optional[str] = None,
-    bio: Optional[str] = None,
-    avatar: Optional[discord.Attachment] = None,
-    avatar_url: Optional[str] = None,
-    banner: Optional[discord.Attachment] = None,
-    banner_url: Optional[str] = None,
-    reset: Optional[bool] = False
-):
-    await bot_profile_logic(ctx, name, bio, avatar, avatar_url, banner, banner_url, reset)
-
-@bot.hybrid_command(name="botprofile", description="Change bot avatar, banner, bio, and nickname in this server only")
-@app_commands.describe(
-    name="New bot nickname for this server only",
-    bio="New server bio (use \\n for line breaks)",
-    avatar="Upload an avatar image for this server only",
-    avatar_url="Direct image URL for avatar",
-    banner="Upload a banner image for this server only",
-    banner_url="Direct image URL for banner",
-    reset="Reset server profile back to global defaults (True/False)"
-)
-async def slash_botprofile(
-    ctx: commands.Context,
-    name: Optional[str] = None,
-    bio: Optional[str] = None,
-    avatar: Optional[discord.Attachment] = None,
-    avatar_url: Optional[str] = None,
-    banner: Optional[discord.Attachment] = None,
-    banner_url: Optional[str] = None,
-    reset: Optional[bool] = False
-):
-    await bot_profile_logic(ctx, name, bio, avatar, avatar_url, banner, banner_url, reset)
 
 @bot.hybrid_command(name="ping", description="Shows the bot latency ping")
 async def slash_ping(ctx: commands.Context):
