@@ -994,7 +994,7 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": None,
+    "cookiefile": COOKIE_ARG,
     "impersonate": CHROME_TARGET,
     "socket_timeout": 15,
     "retries": 2,
@@ -1002,9 +1002,6 @@ YTDL_OPTIONS = {
     "extractor_args": {
         "youtubepot-bgutilhttp": {
             "base_url": ["http://127.0.0.1:4416"]
-        },
-        "youtube": {
-            "player_client": ["visionos", "android", "ios"]
         }
     },
 }
