@@ -1330,16 +1330,25 @@ class YTSource(discord.PCMVolumeTransformer):
                     sc_opts = {
                         "format": "bestaudio/best",
                         "quiet": True,
-                        "extract_flat": False,
+                        "extract_flat": "in_playlist",
+                        "ignoreerrors": True,
                         "socket_timeout": 10
                     }
                     try:
-                        sc_data = yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{stitle}", download=False)
-                        if sc_data and "entries" in sc_data and len(sc_data["entries"]) > 0:
-                            for entry in sc_data["entries"]:
-                                if entry and entry.get("url"):
-                                    print(f"✅ Successfully routed track to audio stream: {entry.get('title')}")
-                                    return entry
+                        sc_search = yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{stitle}", download=False)
+                        entries = sc_search.get("entries", []) if sc_search else []
+                        for entry in entries:
+                            if not entry: continue
+                            track_url = entry.get("url") or entry.get("webpage_url")
+                            if not track_url: continue
+                            try:
+                                play_opts = {"format": "bestaudio/best", "quiet": True, "socket_timeout": 10}
+                                play_data = yt_dlp.YoutubeDL(play_opts).extract_info(track_url, download=False)
+                                if play_data and play_data.get("url"):
+                                    print(f"✅ Successfully routed track to audio stream: {play_data.get('title')}")
+                                    return play_data
+                            except Exception:
+                                continue
                     except Exception as sc_err:
                         print(f"❌ SoundCloud mirror search failed: {sc_err}")
                     raise e
