@@ -994,13 +994,13 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": None,
+    "cookiefile": COOKIE_ARG,
     "socket_timeout": 15,
     "retries": 2,
     "extractor_retries": 2,
     "extractor_args": {
-        "youtube": {
-            "player_client": ["tv_embedded", "android_music", "android", "ios"]
+        "youtubepot-bgutilhttp": {
+            "base_url": ["http://127.0.0.1:4416"]
         }
     },
 }
@@ -1267,12 +1267,15 @@ class YTSource(discord.PCMVolumeTransformer):
             try:
                 return yt_dlp.YoutubeDL(opts).extract_info(url, download=False)
             except Exception as e:
-                print(f"⚠️ Primary extract failed ({e}). Attempting Android fallback...")
+                print(f"⚠️ Primary extract failed ({e}). Attempting fallback...")
                 try:
                     fallback_opts = opts.copy()
                     fallback_opts["extractor_args"] = {
+                        "youtubepot-bgutilhttp": {
+                            "base_url": ["http://127.0.0.1:4416"]
+                        },
                         "youtube": {
-                            "player_client": ["android", "ios"]
+                            "player_client": ["android", "ios", "mweb"]
                         }
                     }
                     return yt_dlp.YoutubeDL(fallback_opts).extract_info(url, download=False)
