@@ -1021,6 +1021,7 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
+    "cookiefile": COOKIE_ARG,
     "socket_timeout": 10,
     "retries": 2,
     "extractor_retries": 2,
@@ -1302,6 +1303,7 @@ class YTSource(discord.PCMVolumeTransformer):
                 "no_warnings": True,
                 "nocheckcertificate": True,
                 "socket_timeout": 10,
+                "cookiefile": COOKIE_ARG,
                 "retries": 2,
                 "extractor_args": {
                     "youtube": {
@@ -1317,7 +1319,7 @@ class YTSource(discord.PCMVolumeTransformer):
             except Exception as e1:
                 print(f"[Tier 1] YouTube native extraction failed: {e1}")
 
-            # Tier 2: YouTube with guest PO-Token & bgutil daemon
+            # Tier 2: YouTube Anonymous Android App Client (in case cookie is rejected)
             tier2_opts = {
                 "format": "bestaudio/18/140/251/250/249/b/best",
                 "quiet": True,
@@ -1326,11 +1328,8 @@ class YTSource(discord.PCMVolumeTransformer):
                 "socket_timeout": 10,
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["android_vr", "mediaconnect", "web"]
+                        "player_client": ["android", "android_creator"]
                     },
-                    "youtubepot-bgutilhttp": {
-                        "base_url": ["http://127.0.0.1:4416"]
-                    }
                 }
             }
             try:
