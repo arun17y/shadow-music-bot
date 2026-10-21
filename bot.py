@@ -1021,18 +1021,15 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch",
-    "cookiefile": COOKIE_ARG,
-    "socket_timeout": 12,
+    "socket_timeout": 10,
     "retries": 2,
     "extractor_retries": 2,
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "tv"]
+            "player_client": ["android", "android_creator"]
         }
     },
 }
-if CHROME_TARGET:
-    YTDL_OPTIONS["impersonate"] = CHROME_TARGET
 
 # ─────────────────────────────────────────────
 #                 EMBED HELPERS (MODERN UI)
@@ -1298,82 +1295,74 @@ class YTSource(discord.PCMVolumeTransformer):
     @classmethod
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         def run():
-            # Tier 1: User's Authenticated Cookies + Chrome TLS Impersonation + POT Provider
+            # Tier 1: YouTube Official Android Mobile App Client (Zero BotGuard block, Direct googlevideo stream)
             tier1_opts = {
                 "format": "bestaudio/18/140/251/250/249/b/best",
                 "quiet": True,
                 "no_warnings": True,
                 "nocheckcertificate": True,
-                "socket_timeout": 8,
-                "retries": 1,
-                "extractor_retries": 1,
-                "cookiefile": COOKIE_ARG,
-                "js_runtimes": {"deno": {}, "node": {}},
-                "remote_components": ["ejs:github", "ejs:npm"],
+                "socket_timeout": 10,
+                "retries": 2,
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["web", "mweb", "android"]
-                    },
-                    "youtubepot-bgutilhttp": {
-                        "base_url": ["http://127.0.0.1:4416"]
+                        "player_client": ["android", "android_creator"]
                     }
                 }
             }
-            if CHROME_TARGET:
-                tier1_opts["impersonate"] = CHROME_TARGET
             try:
                 data = yt_dlp.YoutubeDL(tier1_opts).extract_info(url, download=False)
                 if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
+                    print(f"[Tier 1] YouTube native stream extracted: {data.get('title')}")
                     return data
             except Exception as e1:
-                print(f"[Tier 1] Extraction failed: {e1}")
+                print(f"[Tier 1] YouTube native extraction failed: {e1}")
 
-            # Tier 2: Guest PO-Token via bgutil-pot daemon (Port 4416)
+            # Tier 2: YouTube with guest PO-Token & bgutil daemon
             tier2_opts = {
                 "format": "bestaudio/18/140/251/250/249/b/best",
                 "quiet": True,
                 "no_warnings": True,
                 "nocheckcertificate": True,
-                "socket_timeout": 8,
-                "js_runtimes": {"deno": {}, "node": {}},
-                "remote_components": ["ejs:github", "ejs:npm"],
+                "socket_timeout": 10,
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["mweb", "web_embedded"]
+                        "player_client": ["android_vr", "mediaconnect", "web"]
                     },
                     "youtubepot-bgutilhttp": {
                         "base_url": ["http://127.0.0.1:4416"]
                     }
                 }
             }
-            if CHROME_TARGET:
-                tier2_opts["impersonate"] = CHROME_TARGET
             try:
                 data = yt_dlp.YoutubeDL(tier2_opts).extract_info(url, download=False)
                 if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
+                    print(f"[Tier 2] YouTube PO-Token stream extracted: {data.get('title')}")
                     return data
             except Exception as e2:
-                print(f"[Tier 2] Extraction failed: {e2}")
+                print(f"[Tier 2] Tier 2 extraction failed: {e2}")
 
-            # Tier 3: Android & TV App Clients
-            tier3_opts = {
-                "format": "bestaudio/18/140/251/250/249/b/best",
-                "quiet": True,
-                "no_warnings": True,
-                "nocheckcertificate": True,
-                "socket_timeout": 8,
-                "extractor_args": {
-                    "youtube": {
-                        "player_client": ["android", "tv"]
+            # Tier 3: YouTube with authenticated cookies (if present)
+            if COOKIE_ARG:
+                tier3_opts = {
+                    "format": "bestaudio/18/140/251/250/249/b/best",
+                    "quiet": True,
+                    "no_warnings": True,
+                    "nocheckcertificate": True,
+                    "socket_timeout": 10,
+                    "cookiefile": COOKIE_ARG,
+                    "extractor_args": {
+                        "youtube": {
+                            "player_client": ["mweb", "web"]
+                        }
                     }
                 }
-            }
-            if CHROME_TARGET:
-                tier3_opts["impersonate"] = CHROME_TARGET
-            try:
-                return yt_dlp.YoutubeDL(tier3_opts).extract_info(url, download=False)
-            except Exception as e3:
-                print(f"[Tier 3] Extraction failed: {e3}")
+                try:
+                    data = yt_dlp.YoutubeDL(tier3_opts).extract_info(url, download=False)
+                    if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
+                        print(f"[Tier 3] YouTube cookie stream extracted: {data.get('title')}")
+                        return data
+                except Exception as e3:
+                    print(f"[Tier 3] Tier 3 extraction failed: {e3}")
 
             # Tier 4: Resilient Audio Stream Resolver (Auto-heal for datacenter bot challenges)
             try:
@@ -2181,7 +2170,8 @@ class MusicBot(commands.Bot):
                     opts["extractor_args"]["youtubepot-bgutilhttp"] = {
                         "base_url": ["http://127.0.0.1:4416"]
                     }
-                if CHROME_TARGET:
+                use_imp = request.query.get("imp", "0") == "1"
+                if use_imp and CHROME_TARGET:
                     opts["impersonate"] = CHROME_TARGET
                 try:
                     def _ex():
