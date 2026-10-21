@@ -1027,7 +1027,7 @@ YTDL_OPTIONS = {
     "extractor_retries": 2,
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "android_creator"]
+            "player_client": ["mweb", "web"] if COOKIE_ARG else ["android", "android_creator"]
         }
     },
 }
@@ -1296,36 +1296,37 @@ class YTSource(discord.PCMVolumeTransformer):
     @classmethod
     async def stream(cls, url: str, loop, volume=1.0, active_filter=None, seek_time=0, speed=1.0, pitch=1.0, track_title=None):
         def run():
-            # Tier 1: YouTube Official Android Mobile App Client (Zero BotGuard block, Direct googlevideo stream)
-            tier1_opts = {
-                "format": "bestaudio/18/140/251/250/249/b/best",
-                "quiet": True,
-                "no_warnings": True,
-                "nocheckcertificate": True,
-                "socket_timeout": 10,
-                "cookiefile": COOKIE_ARG,
-                "retries": 2,
-                "extractor_args": {
-                    "youtube": {
-                        "player_client": ["android", "android_creator"]
+            # Tier 1: YouTube with verified cookies (Direct authentic stream, 1s response)
+            if COOKIE_ARG:
+                tier1_opts = {
+                    "format": "bestaudio/18/140/251/250/249/b/best",
+                    "quiet": True,
+                    "no_warnings": True,
+                    "nocheckcertificate": True,
+                    "socket_timeout": 8,
+                    "cookiefile": COOKIE_ARG,
+                    "retries": 2,
+                    "extractor_args": {
+                        "youtube": {
+                            "player_client": ["mweb", "web"]
+                        }
                     }
                 }
-            }
-            try:
-                data = yt_dlp.YoutubeDL(tier1_opts).extract_info(url, download=False)
-                if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
-                    print(f"[Tier 1] YouTube native stream extracted: {data.get('title')}")
-                    return data
-            except Exception as e1:
-                print(f"[Tier 1] YouTube native extraction failed: {e1}")
+                try:
+                    data = yt_dlp.YoutubeDL(tier1_opts).extract_info(url, download=False)
+                    if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
+                        print(f"[Tier 1] YouTube cookie stream extracted: {data.get('title')}")
+                        return data
+                except Exception as e1:
+                    print(f"[Tier 1] YouTube cookie extraction failed: {e1}")
 
-            # Tier 2: YouTube Anonymous Android App Client (in case cookie is rejected)
+            # Tier 2: YouTube Anonymous Android App Client (Zero BotGuard block)
             tier2_opts = {
                 "format": "bestaudio/18/140/251/250/249/b/best",
                 "quiet": True,
                 "no_warnings": True,
                 "nocheckcertificate": True,
-                "socket_timeout": 10,
+                "socket_timeout": 8,
                 "extractor_args": {
                     "youtube": {
                         "player_client": ["android", "android_creator"]
@@ -1335,33 +1336,31 @@ class YTSource(discord.PCMVolumeTransformer):
             try:
                 data = yt_dlp.YoutubeDL(tier2_opts).extract_info(url, download=False)
                 if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
-                    print(f"[Tier 2] YouTube PO-Token stream extracted: {data.get('title')}")
+                    print(f"[Tier 2] YouTube Android stream extracted: {data.get('title')}")
                     return data
             except Exception as e2:
                 print(f"[Tier 2] Tier 2 extraction failed: {e2}")
 
-            # Tier 3: YouTube with authenticated cookies (if present)
-            if COOKIE_ARG:
-                tier3_opts = {
-                    "format": "bestaudio/18/140/251/250/249/b/best",
-                    "quiet": True,
-                    "no_warnings": True,
-                    "nocheckcertificate": True,
-                    "socket_timeout": 10,
-                    "cookiefile": COOKIE_ARG,
-                    "extractor_args": {
-                        "youtube": {
-                            "player_client": ["mweb", "web"]
-                        }
+            # Tier 3: YouTube Web PO-Token stream
+            tier3_opts = {
+                "format": "bestaudio/18/140/251/250/249/b/best",
+                "quiet": True,
+                "no_warnings": True,
+                "nocheckcertificate": True,
+                "socket_timeout": 8,
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["mweb", "web"]
                     }
                 }
-                try:
-                    data = yt_dlp.YoutubeDL(tier3_opts).extract_info(url, download=False)
-                    if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
-                        print(f"[Tier 3] YouTube cookie stream extracted: {data.get('title')}")
-                        return data
-                except Exception as e3:
-                    print(f"[Tier 3] Tier 3 extraction failed: {e3}")
+            }
+            try:
+                data = yt_dlp.YoutubeDL(tier3_opts).extract_info(url, download=False)
+                if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
+                    print(f"[Tier 3] YouTube PO-Token stream extracted: {data.get('title')}")
+                    return data
+            except Exception as e3:
+                print(f"[Tier 3] Tier 3 extraction failed: {e3}")
 
             # Tier 4: Resilient Audio Stream Resolver (Auto-heal for datacenter bot challenges)
             try:
