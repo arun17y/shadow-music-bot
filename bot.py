@@ -1375,6 +1375,46 @@ class YTSource(discord.PCMVolumeTransformer):
             except Exception as e3:
                 print(f"⚠️ Tier 3 extraction failed: {e3}")
 
+            # Tier 4: Resilient Audio Stream Resolver (Auto-heal for datacenter bot challenges)
+            try:
+                search_term = track_title
+                if not search_term and "v=" in url:
+                    try:
+                        import urllib.request
+                        oe_url = f"https://www.youtube.com/oembed?url={url}&format=json"
+                        req = urllib.request.Request(oe_url, headers={"User-Agent": "Mozilla/5.0"})
+                        with urllib.request.urlopen(req, timeout=4) as resp:
+                            oe_data = json.loads(resp.read().decode())
+                            search_term = oe_data.get("title")
+                    except Exception:
+                        pass
+                if not search_term:
+                    search_term = url
+
+                clean_term = re.sub(r'\[.*?\]|\(.*?\)|official|music|video|audio|lyrics', '', search_term, flags=re.IGNORECASE)
+                clean_term = re.sub(r'\s+', ' ', clean_term).strip()
+                if clean_term:
+                    print(f"🔄 Engaging Resilient Stream Resolver for '{clean_term}'...")
+                    sc_opts = {
+                        "format": "bestaudio/best",
+                        "quiet": True,
+                        "no_warnings": True,
+                        "nocheckcertificate": True,
+                        "socket_timeout": 8,
+                    }
+                    sc_res = yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{clean_term}", download=False)
+                    if sc_res and "entries" in sc_res:
+                        for entry in sc_res["entries"]:
+                            if not entry:
+                                continue
+                            dur = int(entry.get("duration") or 0)
+                            surl = entry.get("url") or ""
+                            if dur > 60 and "preview" not in surl:
+                                print(f"✅ Resilient Stream successfully resolved: {entry.get('title')} ({dur}s)")
+                                return entry
+            except Exception as res_err:
+                print(f"⚠️ Resilient stream resolver error: {res_err}")
+
             raise RuntimeError("All extraction tiers exhausted for URL: " + url)
 
         data = await loop.run_in_executor(None, run)
