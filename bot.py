@@ -1304,9 +1304,9 @@ class YTSource(discord.PCMVolumeTransformer):
                 "quiet": True,
                 "no_warnings": True,
                 "nocheckcertificate": True,
-                "socket_timeout": 12,
-                "retries": 2,
-                "extractor_retries": 2,
+                "socket_timeout": 8,
+                "retries": 1,
+                "extractor_retries": 1,
                 "cookiefile": COOKIE_ARG,
                 "js_runtimes": {"deno": {}, "node": {}},
                 "remote_components": ["ejs:github", "ejs:npm"],
@@ -1326,7 +1326,7 @@ class YTSource(discord.PCMVolumeTransformer):
                 if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
                     return data
             except Exception as e1:
-                print(f"⚠️ Tier 1 extraction failed: {e1}")
+                print(f"[Tier 1] Extraction failed: {e1}")
 
             # Tier 2: Guest PO-Token via bgutil-pot daemon (Port 4416)
             tier2_opts = {
@@ -1334,7 +1334,7 @@ class YTSource(discord.PCMVolumeTransformer):
                 "quiet": True,
                 "no_warnings": True,
                 "nocheckcertificate": True,
-                "socket_timeout": 12,
+                "socket_timeout": 8,
                 "js_runtimes": {"deno": {}, "node": {}},
                 "remote_components": ["ejs:github", "ejs:npm"],
                 "extractor_args": {
@@ -1353,7 +1353,7 @@ class YTSource(discord.PCMVolumeTransformer):
                 if data and (data.get("url") or (data.get("entries") and data["entries"][0].get("url"))):
                     return data
             except Exception as e2:
-                print(f"⚠️ Tier 2 extraction failed: {e2}")
+                print(f"[Tier 2] Extraction failed: {e2}")
 
             # Tier 3: Android & TV App Clients
             tier3_opts = {
@@ -1361,7 +1361,7 @@ class YTSource(discord.PCMVolumeTransformer):
                 "quiet": True,
                 "no_warnings": True,
                 "nocheckcertificate": True,
-                "socket_timeout": 12,
+                "socket_timeout": 8,
                 "extractor_args": {
                     "youtube": {
                         "player_client": ["android", "tv"]
@@ -1373,7 +1373,7 @@ class YTSource(discord.PCMVolumeTransformer):
             try:
                 return yt_dlp.YoutubeDL(tier3_opts).extract_info(url, download=False)
             except Exception as e3:
-                print(f"⚠️ Tier 3 extraction failed: {e3}")
+                print(f"[Tier 3] Extraction failed: {e3}")
 
             # Tier 4: Resilient Audio Stream Resolver (Auto-heal for datacenter bot challenges)
             try:
@@ -1391,18 +1391,42 @@ class YTSource(discord.PCMVolumeTransformer):
                 if not search_term:
                     search_term = url
 
-                clean_term = re.sub(r'\[.*?\]|\(.*?\)|official|music|video|audio|lyrics', '', search_term, flags=re.IGNORECASE)
-                clean_term = re.sub(r'\s+', ' ', clean_term).strip()
-                if clean_term:
-                    print(f"🔄 Engaging Resilient Stream Resolver for '{clean_term}'...")
-                    sc_opts = {
-                        "format": "bestaudio/best",
-                        "quiet": True,
-                        "no_warnings": True,
-                        "nocheckcertificate": True,
-                        "socket_timeout": 8,
-                    }
-                    sc_res = yt_dlp.YoutubeDL(sc_opts).extract_info(f"scsearch5:{clean_term}", download=False)
+                def _clean_q(raw):
+                    t = re.sub(r'\[.*?\]|\(.*?\)', '', raw)
+                    segs = [s.strip() for s in re.split(r'\|', t) if s.strip()]
+                    fluff = r'official|music|video|audio|lyrics|hd|4k|full song|latest romantic|love song'
+                    if len(segs) > 1:
+                        s0 = re.sub(fluff, '', segs[0], flags=re.IGNORECASE).strip()
+                        s1 = re.sub(fluff, '', segs[1], flags=re.IGNORECASE).strip()
+                        t = f"{s0} {s1}"
+                    else:
+                        t = re.sub(fluff, '', t, flags=re.IGNORECASE)
+                    t = re.sub(r'[^\w\s&]', ' ', t)
+                    return re.sub(r'\s+', ' ', t).strip()
+
+                candidates = []
+                cleaned = _clean_q(search_term)
+                if cleaned:
+                    candidates.append(cleaned)
+                if search_term != cleaned:
+                    raw_fallback = re.sub(r'[^\w\s]', ' ', search_term)
+                    raw_fallback = re.sub(r'\s+', ' ', raw_fallback).strip()
+                    if raw_fallback and raw_fallback not in candidates:
+                        candidates.append(raw_fallback)
+
+                sc_opts = {
+                    "format": "bestaudio/best",
+                    "quiet": True,
+                    "no_warnings": True,
+                    "nocheckcertificate": True,
+                    "socket_timeout": 8,
+                    "ignoreerrors": True,
+                }
+                ydl_sc = yt_dlp.YoutubeDL(sc_opts)
+
+                for cand in candidates:
+                    print(f"[Tier 4] Engaging Resilient Stream Resolver for '{cand}'...")
+                    sc_res = ydl_sc.extract_info(f"scsearch5:{cand}", download=False)
                     if sc_res and "entries" in sc_res:
                         for entry in sc_res["entries"]:
                             if not entry:
@@ -1410,10 +1434,10 @@ class YTSource(discord.PCMVolumeTransformer):
                             dur = int(entry.get("duration") or 0)
                             surl = entry.get("url") or ""
                             if dur > 60 and "preview" not in surl:
-                                print(f"✅ Resilient Stream successfully resolved: {entry.get('title')} ({dur}s)")
+                                print(f"[Tier 4] Stream successfully resolved: {entry.get('title')} ({dur}s)")
                                 return entry
             except Exception as res_err:
-                print(f"⚠️ Resilient stream resolver error: {res_err}")
+                print(f"[Tier 4] Resilient stream resolver error: {res_err}")
 
             raise RuntimeError("All extraction tiers exhausted for URL: " + url)
 
@@ -3174,13 +3198,16 @@ async def play_next(guild: discord.Guild, interaction: Optional[discord.Interact
         src = await YTSource.stream(track["url"], bot.loop, volume=p.volume, active_filter=p.filter, seek_time=p.seek_offset, speed=p.speed, pitch=p.pitch, track_title=track.get("title"))
         print(f"DEBUG: play_next stream successfully extracted, direct url is: {src.data.get('url') if src.data else 'None'}")
         
-        # Update metadata if resolved
+        # Preserve original YouTube presentation metadata if already populated
         if src.data:
-            track["url"] = src.data.get("webpage_url") or src.data.get("url", track["url"])
-            track["title"] = src.data.get("title", track["title"])
-            track["duration"] = int(src.data.get("duration") or 0)
-            track["thumbnail"] = src.data.get("thumbnail", track["thumbnail"])
-            track["uploader"] = src.data.get("uploader", track["uploader"])
+            if not track.get("title") or track.get("title") == track.get("url"):
+                track["title"] = src.data.get("title", track.get("title"))
+            if not track.get("duration"):
+                track["duration"] = int(src.data.get("duration") or 0)
+            if not track.get("thumbnail"):
+                track["thumbnail"] = src.data.get("thumbnail", "")
+            if not track.get("uploader"):
+                track["uploader"] = src.data.get("uploader", "YouTube")
 
         p.history.appendleft(track)
 
