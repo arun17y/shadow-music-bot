@@ -2972,6 +2972,17 @@ async def on_guild_join(guild: discord.Guild):
         except Exception:
             pass
 
+# Guild Leave Event
+@bot.event
+async def on_guild_remove(guild: discord.Guild):
+    print(f'Left guild: {guild.name} (ID: {guild.id})')
+    try:
+        conn = Database.get_connection()
+        conn.execute('DELETE FROM guild_settings WHERE guild_id = ?', (guild.id,))
+        conn.commit()
+    except Exception as e:
+        print(f'Error cleaning guild settings for {guild.id}: {e}')
+
 # Inactivity and Empty Voice Channel Auto-Disconnect Task Loop (with 24/7 Watchdog)
 @tasks.loop(seconds=60)
 async def check_voice_channels():
